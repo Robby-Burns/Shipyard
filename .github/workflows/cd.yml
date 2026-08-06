@@ -1,0 +1,21 @@
+name: Continuous Deployment
+
+on:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  deploy:
+    name: Deploy to Staging/Production
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Deploy Placeholder / Railway Trigger
+        run: |
+          echo "CI checks passed! Ready to deploy to Railway/Cloud infrastructure."
+          # If using Railway CLI or Webhook, add the deployment trigger here:
+          # railway up --service shipyard-api

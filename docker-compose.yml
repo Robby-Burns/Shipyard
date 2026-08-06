@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: shipyard-db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword
+      POSTGRES_DB: shipyard
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: shipyard-api
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_ENV=development
+      - DEBUG=true
+      - PORT=8000
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgrespassword@db:5432/shipyard
+      - JWT_SECRET_KEY=dev-secret-key-change-in-prod
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
