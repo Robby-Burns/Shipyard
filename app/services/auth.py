@@ -18,6 +18,8 @@ async def get_current_user(
         )
 
     token = credentials.credentials
+    if isinstance(token, bytes):
+        token = token.decode()
     try:
         payload = jwt.decode(
             token,

@@ -11,6 +11,9 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+        # Enforce max length of 100 characters; truncate if longer
+        if len(request_id) > 100:
+            request_id = request_id[:100]
         request.state.request_id = request_id
 
         # Bind context variables for structured logs in this request execution context

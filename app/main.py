@@ -4,16 +4,20 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.health import router as health_router
 from app.api.v1.activity_logs import router as activity_log_router
+from app.api.v1.knowledge import router as knowledge_router
+from app.api.v1.maintenance import router as maintenance_router
 from app.api.v1.memory_gateway import router as memory_gateway_router
 from app.api.v1.model_router import router as model_router_router
 from app.api.v1.tool_gateway import router as tool_gateway_router
 from app.config.settings import settings
+from app.infrastructure.auth_middleware import AuthMiddleware
 from app.infrastructure.exceptions import (
     generic_exception_handler,
     validation_exception_handler,
 )
 from app.infrastructure.logging import setup_logging
 from app.infrastructure.middleware import RequestContextMiddleware
+from app.infrastructure.ratelimit_middleware import RateLimitMiddleware
 from app.services.auth import get_current_user
 
 # Initialize logging configuration
@@ -29,6 +33,8 @@ app.add_exception_handler(
 
 # Middleware
 app.add_middleware(RequestContextMiddleware)
+app.add_middleware(AuthMiddleware)
+app.add_middleware(RateLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -43,6 +49,8 @@ app.include_router(activity_log_router)
 app.include_router(model_router_router)
 app.include_router(tool_gateway_router)
 app.include_router(memory_gateway_router)
+app.include_router(knowledge_router)
+app.include_router(maintenance_router)
 
 
 @app.get("/")

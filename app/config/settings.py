@@ -18,6 +18,8 @@ class Settings(BaseSettings):
 
     # CORS settings
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:8000"]
+    # Rate‑limit: max requests per minute per user/IP
+    rate_limit_requests_per_minute: int = 60
 
     # Model Router settings
     openrouter_api_key: str = "mock-key"
@@ -29,6 +31,11 @@ class Settings(BaseSettings):
     default_model_code_review: str = "openai/gpt-4o"
     default_model_testing: str = "openai/gpt-4o-mini"
     default_model_general_reasoning: str = "google/gemini-2.5-flash"
+
+    # Memory retention periods (in days)
+    private_memory_retention_days: int = 7
+    proposed_candidate_retention_days: int = 30
+    rejected_candidate_retention_days: int = 14
 
     @field_validator("database_url", mode="after")
     @classmethod

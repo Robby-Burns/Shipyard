@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.api.health import get_db
+from app.database.session import get_db
 from app.config.settings import settings
 from app.database.session import Base
 from app.main import app

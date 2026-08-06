@@ -29,4 +29,4 @@ class ModelRouteResponse(BaseModel):
     capability: Capability
     model_used: str
     content: str
-    usage: Dict[str, int] = Field(default_factory=dict)
+    usage: Dict[str, Any] = Field(default_factory=dict)

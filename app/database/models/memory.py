@@ -2,7 +2,25 @@ from datetime import datetime, timezone
 import uuid
 from typing import Any, Dict, List, Optional
 
-from pgvector.sqlalchemy import Vector
+try:
+    from pgvector.sqlalchemy import Vector
+except Exception:  # pragma: no cover
+    # Fallback for non‑PostgreSQL databases (e.g., SQLite in tests).
+    # We cannot use pgvector's dimension argument, so we provide a thin wrapper
+    # that accepts an optional `dim` parameter but returns a JSON column. This
+    # preserves the model's attribute signatures while sacrificing native vector
+    # operators (cosine_distance, l2_distance, etc.) on SQLite.
+    from sqlalchemy.types import JSON
+    def Vector(dim=None):
+        """Fallback Vector type for SQLite.
+
+        Args:
+            dim (int, optional): Ignored; present only for signature compatibility.
+        Returns:
+            sqlalchemy.types.JSON: Column type that stores the vector as JSON.
+        """
+        return JSON
+
 from sqlalchemy import JSON, DateTime, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column

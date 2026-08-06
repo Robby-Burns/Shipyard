@@ -37,7 +37,8 @@ class MemoryGatewayService:
         # Distance-based vector search if embedding is provided and dialect supports pgvector
         if (
             search_req.query_embedding
-            and self.db.bind
+            and getattr(self.db, "bind", None) is not None
+            and getattr(self.db.bind, "dialect", None) is not None
             and self.db.bind.dialect.name == "postgresql"
         ):
             query = query.order_by(
