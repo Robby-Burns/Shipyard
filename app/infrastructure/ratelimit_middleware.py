@@ -5,9 +5,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from cachetools import TTLCache
 from app.config.settings import settings
 
-# In‑process cache: keys → (request count, expiry handled by TTLCache)
-# TTL is one minute (60 seconds) matching the rate‑limit window.
+# In‑process cache: keys → (tokens, last_refill_timestamp)
 _cache = TTLCache(maxsize=10_000, ttl=60)
+# Spend cap tracking: cumulative request tokens consumed per day (24h = 86400s)
+_spend = TTLCache(maxsize=10_000, ttl=86400)
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Enforces a simple per‑user/IP request rate limit.
@@ -32,21 +33,47 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             key = f"ip:{request.client.host if request.client else 'unknown'}"
 
         limit = getattr(settings, "rate_limit_requests_per_minute", 60)
-        count = _cache_get(key)
-        if count >= limit:
+        # Token bucket state: (tokens, last_refill_timestamp)
+        bucket = _cache_get(key)
+        now = time.time()
+        if bucket is None:
+            tokens = limit
+            last = now
+        else:
+            tokens, last = bucket
+            # Refill based on elapsed time (seconds)
+            elapsed = now - last
+            refill = (elapsed / 60) * limit
+            tokens = min(limit, tokens + refill)
+            last = now
+        if tokens < 1:
             return JSONResponse(
                 status_code=429,
                 content={"detail": "Too Many Requests – rate limit exceeded"},
             )
-        _cache_inc(key)
+        # Consume a token
+        tokens -= 1
+        _cache_set(key, (tokens, last))
+        # Spend‑cap tracking (cumulative tokens used)
+        cap = getattr(settings, "spend_cap_per_user", None)
+        if cap is not None:
+            used = _spend_get(key)
+            if used + 1 > cap:
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "Spend cap exceeded"},
+                )
+            _spend_inc(key)
         return await call_next(request)
 
-def _cache_get(key: str) -> int:
-    """Return current request count for *key* (0 if not present)."""
-    return _cache.get(key, 0)
+def _cache_get(key: str):
+    return _cache.get(key)
 
-def _cache_inc(key: str) -> None:
-    """Increment request count for *key*.
-    ``TTLCache`` automatically resets the entry after its TTL.
-    """
-    _cache[key] = _cache.get(key, 0) + 1
+def _cache_set(key: str, value) -> None:
+    _cache[key] = value
+
+def _spend_get(key: str) -> int:
+    return _spend.get(key, 0)
+
+def _spend_inc(key: str) -> None:
+    _spend[key] = _spend.get(key, 0) + 1

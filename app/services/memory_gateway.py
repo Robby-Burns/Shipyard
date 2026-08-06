@@ -34,13 +34,16 @@ class MemoryGatewayService:
         if search_req.category:
             query = query.where(MemoryRecord.category == search_req.category)
 
-        # Distance-based vector search if embedding is provided and dialect supports pgvector
-        if (
-            search_req.query_embedding
-            and getattr(self.db, "bind", None) is not None
-            and getattr(self.db.bind, "dialect", None) is not None
-            and self.db.bind.dialect.name == "postgresql"
-        ):
+        # Check dialect using get_bind() safely to support pgvector on PostgreSQL
+        is_postgresql = False
+        try:
+            bind = self.db.get_bind()
+            if bind and getattr(bind, "dialect", None) is not None and bind.dialect.name == "postgresql":
+                is_postgresql = True
+        except Exception:
+            pass
+
+        if search_req.query_embedding and is_postgresql:
             query = query.order_by(
                 MemoryRecord.embedding.l2_distance(search_req.query_embedding)
             )

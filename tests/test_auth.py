@@ -24,7 +24,7 @@ def test_invalid_token_access():
 
 
 def test_valid_token_access():
-    payload = {"sub": "user_123", "email": "user@example.com", "role": "admin"}
+    payload = {"sub": "user_123", "email": "user@example.com", "role": "admin", "exp": 9999999999}
     token = jwt.encode(
         payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm
     )

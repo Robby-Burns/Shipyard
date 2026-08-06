@@ -98,7 +98,7 @@ def test_knowledge_endpoints_authenticated():
     app.dependency_overrides[get_db] = init_and_override
     try:
         token = jwt.encode(
-            {"sub": "architect_bob"},
+            {"sub": "architect_bob", "exp": 9999999999},
             settings.jwt_secret_key,
             algorithm=settings.jwt_algorithm,
         )

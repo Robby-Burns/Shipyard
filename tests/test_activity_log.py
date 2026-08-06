@@ -96,7 +96,7 @@ def test_activity_log_endpoint_authenticated():
     app.dependency_overrides[get_db] = init_and_override
     try:
         token = jwt.encode(
-            {"sub": "admin_user"},
+            {"sub": "admin_user", "exp": 9999999999},
             settings.jwt_secret_key,
             algorithm=settings.jwt_algorithm,
         )

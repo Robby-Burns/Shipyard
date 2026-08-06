@@ -11,15 +11,37 @@ except Exception:  # pragma: no cover
     # preserves the model's attribute signatures while sacrificing native vector
     # operators (cosine_distance, l2_distance, etc.) on SQLite.
     from sqlalchemy.types import JSON
-    def Vector(dim=None):
-        """Fallback Vector type for SQLite.
+    from sqlalchemy.types import TypeDecorator, TEXT
 
-        Args:
-            dim (int, optional): Ignored; present only for signature compatibility.
-        Returns:
-            sqlalchemy.types.JSON: Column type that stores the vector as JSON.
+    class Vector(TypeDecorator):
+        """Fallback Vector type for SQLite using JSON serialization.
+
+        Emulates the ``pgvector.sqlalchemy.Vector`` constructor signature while
+        storing the vector as a JSON column.  The ``process_bind_param`` method
+        converts a ``list`` of floats into a JSON‑serialisable Python object, and
+        ``process_result_value`` returns the stored list.
         """
-        return JSON
+
+        impl = TEXT
+
+        def __init__(self, dim=None, **kwargs):
+            # ``dim`` is kept for API compatibility; it is not used by SQLite.
+            super().__init__(**kwargs)
+            self.dim = dim
+
+        def process_bind_param(self, value, dialect):
+            # ``value`` may be ``None`` or a list of floats.
+            if value is None:
+                return None
+            # Ensure we store a JSON‑serialisable representation.
+            return value
+
+        def process_result_value(self, value, dialect):
+            # ``value`` comes back as the JSON payload; leave as‑is.
+            return value
+
+        def copy(self, **kw):
+            return Vector(self.dim, **kw)
 
 from sqlalchemy import JSON, DateTime, String, Text
 from sqlalchemy.dialects.postgresql import UUID

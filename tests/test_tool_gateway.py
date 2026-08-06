@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.api.health import get_db
+from app.database.session import get_db
 from app.config.settings import settings
 from app.database.models.tool_log import ToolExecutionLog
 from app.database.session import Base
@@ -86,7 +86,7 @@ def test_tool_gateway_endpoint_authenticated():
     app.dependency_overrides[get_db] = init_and_override
     try:
         token = jwt.encode(
-            {"sub": "dev_user"},
+            {"sub": "dev_user", "exp": 9999999999},
             settings.jwt_secret_key,
             algorithm=settings.jwt_algorithm,
         )

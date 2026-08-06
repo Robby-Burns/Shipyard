@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:8000"]
     # Rate‑limit: max requests per minute per user/IP
     rate_limit_requests_per_minute: int = 60
+    # Spend cap: max requests per day per user/IP (optional)
+    spend_cap_per_user: int = 100
 
     # Model Router settings
     openrouter_api_key: str = "mock-key"

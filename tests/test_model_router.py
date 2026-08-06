@@ -120,7 +120,7 @@ def test_model_router_endpoint_authenticated():
     app.dependency_overrides[get_db] = init_and_override
     try:
         token = jwt.encode(
-            {"sub": "test_user"},
+            {"sub": "test_user", "exp": 9999999999},
             settings.jwt_secret_key,
             algorithm=settings.jwt_algorithm,
         )
