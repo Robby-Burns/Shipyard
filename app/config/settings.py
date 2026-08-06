@@ -19,6 +19,17 @@ class Settings(BaseSettings):
     # CORS settings
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:8000"]
 
+    # Model Router settings
+    openrouter_api_key: str = "mock-key"
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+
+    # Capability mappings
+    default_model_architecture: str = "anthropic/claude-3.5-sonnet"
+    default_model_coding: str = "anthropic/claude-3.5-sonnet"
+    default_model_code_review: str = "openai/gpt-4o"
+    default_model_testing: str = "openai/gpt-4o-mini"
+    default_model_general_reasoning: str = "google/gemini-2.5-flash"
+
     @field_validator("database_url", mode="after")
     @classmethod
     def assemble_db_connection(cls, v: str) -> str:

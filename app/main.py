@@ -3,6 +3,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.health import router as health_router
+from app.api.v1.activity_logs import router as activity_log_router
+from app.api.v1.memory_gateway import router as memory_gateway_router
+from app.api.v1.model_router import router as model_router_router
+from app.api.v1.tool_gateway import router as tool_gateway_router
 from app.config.settings import settings
 from app.infrastructure.exceptions import (
     generic_exception_handler,
@@ -35,6 +39,10 @@ app.add_middleware(
 
 # Routers
 app.include_router(health_router)
+app.include_router(activity_log_router)
+app.include_router(model_router_router)
+app.include_router(tool_gateway_router)
+app.include_router(memory_gateway_router)
 
 
 @app.get("/")
