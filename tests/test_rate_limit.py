@@ -3,14 +3,9 @@ import jwt
 import pytest
 from app.config.settings import settings
 from app.main import app
-from app.infrastructure.ratelimit_middleware import _cache, _spend
+from app.infrastructure.ratelimit_middleware import rate_limit_store
 
 client = TestClient(app)
-
-@pytest.fixture(autouse=True)
-def clear_caches():
-    _cache.clear()
-    _spend.clear()
 
 def test_rate_limiting_under_limit():
     token = jwt.encode(

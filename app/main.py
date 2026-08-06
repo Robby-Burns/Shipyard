@@ -10,6 +10,7 @@ from app.api.v1.maintenance import router as maintenance_router
 from app.api.v1.memory_gateway import router as memory_gateway_router
 from app.api.v1.model_router import router as model_router_router
 from app.api.v1.tool_gateway import router as tool_gateway_router
+from app.api.v1.workflows import router as workflows_router
 from app.config.settings import settings
 from app.infrastructure.auth_middleware import AuthMiddleware
 from app.infrastructure.exceptions import (
@@ -53,6 +54,7 @@ app.include_router(memory_gateway_router)
 app.include_router(knowledge_router)
 app.include_router(maintenance_router)
 app.include_router(agents_router)
+app.include_router(workflows_router)
 
 
 @app.get("/")

@@ -2,11 +2,18 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 import uuid
 
-from pydantic import BaseModel, ConfigDict
+from enum import Enum
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class MemoryCategory(str, Enum):
+    PRIVATE = "private"
+    SHARED = "shared"
+    CANDIDATE = "candidate"
 
 
 class MemoryRecordCreate(BaseModel):
-    category: str  # 'private', 'candidate', 'shared'
+    category: MemoryCategory
     content: str
     metadata_json: Optional[Dict[str, Any]] = None
     embedding: Optional[List[float]] = None
@@ -14,7 +21,7 @@ class MemoryRecordCreate(BaseModel):
 
 class MemoryRecordResponse(BaseModel):
     id: uuid.UUID
-    category: str
+    category: MemoryCategory
     content: str
     metadata_json: Optional[Dict[str, Any]]
     created_at: datetime
@@ -25,6 +32,6 @@ class MemoryRecordResponse(BaseModel):
 
 class MemorySearchRequest(BaseModel):
     query_text: Optional[str] = None
-    category: Optional[str] = None
+    category: Optional[MemoryCategory] = None
     query_embedding: Optional[List[float]] = None
-    limit: int = 10
+    limit: int = Field(10, gt=0, le=100)

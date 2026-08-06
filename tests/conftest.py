@@ -1,7 +1,6 @@
 import pytest
-from app.infrastructure.ratelimit_middleware import _cache, _spend
+from app.infrastructure.ratelimit_middleware import rate_limit_store
 
 @pytest.fixture(autouse=True)
 def clear_rate_limit_caches():
-    _cache.clear()
-    _spend.clear()
+    rate_limit_store.clear()

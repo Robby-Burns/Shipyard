@@ -1,5 +1,6 @@
 from typing import Any, Dict, Optional
 
+from fastapi import HTTPException
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
@@ -74,25 +75,86 @@ class ModelRouterService:
                 "max_tokens": request.max_tokens,
             }
 
-            async with httpx.AsyncClient() as client:
-                res = await client.post(
-                    f"{settings.openrouter_base_url}/chat/completions",
-                    json=payload,
-                    headers=headers,
-                    timeout=30.0,
+            try:
+                async with httpx.AsyncClient() as client:
+                    res = await client.post(
+                        f"{settings.openrouter_base_url}/chat/completions",
+                        json=payload,
+                        headers=headers,
+                        timeout=30.0,
+                    )
+                    res.raise_for_status()
+                    data = res.json()
+
+                    content = data["choices"][0]["message"]["content"]
+                    usage = data.get("usage", {})
+
+                    response = ModelRouteResponse(
+                        id=data.get("id", "completion-id"),
+                        capability=request.capability,
+                        model_used=model_name,
+                        content=content,
+                        usage=usage,
+                    )
+            except httpx.TimeoutException as exc:
+                await self.activity_log_service.record(
+                    event_type="model_route_failed",
+                    source="model_router",
+                    request_id=request_id,
+                    payload={
+                        "capability": request.capability.value,
+                        "model": model_name,
+                        "error": str(exc),
+                    },
                 )
-                res.raise_for_status()
-                data = res.json()
-
-                content = data["choices"][0]["message"]["content"]
-                usage = data.get("usage", {})
-
-                response = ModelRouteResponse(
-                    id=data.get("id", "completion-id"),
-                    capability=request.capability,
-                    model_used=model_name,
-                    content=content,
-                    usage=usage,
+                raise HTTPException(
+                    status_code=504,
+                    detail="Gateway Timeout – OpenRouter API request timed out",
+                )
+            except (httpx.ConnectError, httpx.NetworkError) as exc:
+                await self.activity_log_service.record(
+                    event_type="model_route_failed",
+                    source="model_router",
+                    request_id=request_id,
+                    payload={
+                        "capability": request.capability.value,
+                        "model": model_name,
+                        "error": str(exc),
+                    },
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail="Service Unavailable – failed to connect to OpenRouter API",
+                )
+            except httpx.HTTPStatusError as exc:
+                await self.activity_log_service.record(
+                    event_type="model_route_failed",
+                    source="model_router",
+                    request_id=request_id,
+                    payload={
+                        "capability": request.capability.value,
+                        "model": model_name,
+                        "error": str(exc),
+                    },
+                )
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Bad Gateway – OpenRouter API returned status code {exc.response.status_code}",
+                )
+            except Exception as exc:
+                await self.activity_log_service.record(
+                    event_type="model_route_failed",
+                    source="model_router",
+                    request_id=request_id,
+                    payload={
+                        "capability": request.capability.value,
+                        "model": model_name,
+                        "error": str(exc),
+                    },
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Internal Server Error – failed to process Model Router response: {str(exc)}",
                 )
 
         # Record completion log

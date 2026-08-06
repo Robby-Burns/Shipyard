@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
@@ -24,7 +24,7 @@ class MemoryCleanupService:
         )
 
         stmt = delete(MemoryRecord).where(
-            MemoryRecord.category == "private", MemoryRecord.created_at < cutoff
+            func.lower(MemoryRecord.category) == "private", MemoryRecord.created_at < cutoff
         )
         result = await self.db.execute(stmt)
         await self.db.commit()
