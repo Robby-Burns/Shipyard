@@ -11,6 +11,7 @@ from app.main import app
 from app.schemas.knowledge import (
     KnowledgeItemCreate,
     KnowledgePromotionRequest,
+    KnowledgeRejectionRequest,
     KnowledgeStatus,
     MemoryTier,
 )
@@ -76,6 +77,23 @@ async def test_knowledge_service_lifecycle(async_session: AsyncSession):
     )
     assert len(shared_items) == 1
     assert shared_items[0].id == proposed_item.id
+
+    # 5. Propose second candidate and reject it
+    item_in_2 = KnowledgeItemCreate(
+        title="Bad Formatting Rule",
+        tier=MemoryTier.CANDIDATE,
+        category="coding_standard",
+        content="Always indent with 5 spaces",
+    )
+    proposed_item_2 = await service.propose_candidate(item_in_2)
+    reject_req = KnowledgeRejectionRequest(
+        rejected_by="tech_lead_alice", comments="No, standard is 4 spaces."
+    )
+    rejected_item = await service.reject_candidate(proposed_item_2.id, reject_req)
+    assert rejected_item is not None
+    assert rejected_item.status == KnowledgeStatus.REJECTED
+    assert rejected_item.metadata_json["rejection_comments"] == "No, standard is 4 spaces."
+    assert rejected_item.metadata_json["rejected_by"] == "tech_lead_alice"
 
 
 def test_knowledge_endpoints_unauthenticated():
@@ -150,5 +168,29 @@ def test_knowledge_endpoints_authenticated():
         shared_list = shared_res.json()
         assert len(shared_list) == 1
         assert shared_list[0]["title"] == "PostgreSQL Vector Guide"
+
+        # Propose second candidate for rejection test
+        propose_res_2 = client.post(
+            "/api/v1/knowledge/propose",
+            headers=headers,
+            json={
+                "title": "Outdated Docker Base",
+                "tier": "candidate",
+                "category": "playbook",
+                "content": "Use Python 3.8",
+            },
+        )
+        item_id_2 = propose_res_2.json()["id"]
+
+        # Reject candidate via POST /api/v1/knowledge/{id}/reject
+        reject_res = client.post(
+            f"/api/v1/knowledge/{item_id_2}/reject",
+            headers=headers,
+            json={"rejected_by": "lead_architect", "comments": "Python 3.8 is deprecated"},
+        )
+        assert reject_res.status_code == 200
+        rejected_data = reject_res.json()
+        assert rejected_data["status"] == "rejected"
+        assert rejected_data["metadata_json"]["rejection_comments"] == "Python 3.8 is deprecated"
     finally:
         app.dependency_overrides.clear()

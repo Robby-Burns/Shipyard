@@ -9,6 +9,7 @@ from app.database.models.knowledge import KnowledgeItem
 from app.schemas.knowledge import (
     KnowledgeItemCreate,
     KnowledgePromotionRequest,
+    KnowledgeRejectionRequest,
     KnowledgeStatus,
     MemoryTier,
 )
@@ -105,3 +106,29 @@ class KnowledgeService:
 
         result = await self.db.execute(query)
         return list(result.scalars().all())
+
+    async def reject_candidate(
+        self, item_id: uuid.UUID, reject_req: KnowledgeRejectionRequest
+    ) -> Optional[KnowledgeItem]:
+        """Reject a candidate knowledge item."""
+        result = await self.db.execute(
+            select(KnowledgeItem).where(KnowledgeItem.id == item_id)
+        )
+        item = result.scalar_one_or_none()
+
+        if not item:
+            return None
+
+        # Archive status to REJECTED
+        item.status = KnowledgeStatus.REJECTED
+        
+        # Serialize rejection details into metadata JSON
+        meta = dict(item.metadata_json) if item.metadata_json else {}
+        meta["rejection_comments"] = reject_req.comments
+        meta["rejected_by"] = reject_req.rejected_by
+        meta["rejected_at"] = datetime.now(timezone.utc).isoformat()
+        item.metadata_json = meta
+
+        await self.db.commit()
+        await self.db.refresh(item)
+        return item

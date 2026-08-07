@@ -1,6 +1,7 @@
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from app.api.health import router as health_router
 from app.api.v1.activity_logs import router as activity_log_router
@@ -65,11 +66,20 @@ app.include_router(auth_router)
 app.include_router(metrics_router)
 app.include_router(console_router)
 
-# Mount static frontend
-app.mount("/", StaticFiles(directory="frontend", html=True), name="static")
+# Root Route
+@app.get("/")
+async def root(request: Request):
+    accept = request.headers.get("accept", "")
+    if "text/html" in accept:
+        return FileResponse("frontend/index.html")
+    return {"message": "Shipyard Platform Operational", "env": settings.app_env}
 
 
 # Protected Test Route
 @app.get("/api/v1/me")
 async def get_me(user: dict = Depends(get_current_user)):
     return {"user": user}
+
+
+# Mount static frontend
+app.mount("/", StaticFiles(directory="frontend", html=True), name="static")

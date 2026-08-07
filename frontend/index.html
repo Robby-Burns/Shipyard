@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shipyard — AI Engineering Organization</title>
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Main stylesheet -->
+    <link rel="stylesheet" href="/index.css">
+    <!-- Markdown Parser -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+    <!-- App Container -->
+    <div class="app-layout">
+        
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <i class="fa-solid fa-anchor logo-icon"></i>
+                    <span>SHIPYARD</span>
+                </div>
+                <div class="system-status-indicator" id="system-health">
+                    <span class="status-dot green animate-pulse"></span>
+                    <span class="status-text">Operational</span>
+                </div>
+            </div>
+
+            <nav class="sidebar-nav">
+                <button class="nav-btn active" data-tab="new-request">
+                    <i class="fa-solid fa-paper-plane nav-icon"></i>
+                    <span>New Request</span>
+                </button>
+                <button class="nav-btn" data-tab="projects" id="nav-projects-btn">
+                    <i class="fa-solid fa-diagram-project nav-icon"></i>
+                    <span>Projects</span>
+                    <span class="badge" id="active-projects-badge" style="display: none;">0</span>
+                </button>
+                <button class="nav-btn" data-tab="journal">
+                    <i class="fa-solid fa-clock-rotate-left nav-icon"></i>
+                    <span>Journal</span>
+                </button>
+                <button class="nav-btn" data-tab="passports">
+                    <i class="fa-solid fa-passport nav-icon"></i>
+                    <span>Passports</span>
+                </button>
+                <button class="nav-btn" data-tab="knowledge" id="nav-knowledge-btn">
+                    <i class="fa-solid fa-brain nav-icon"></i>
+                    <span>Shared Knowledge</span>
+                    <span class="badge" id="active-candidates-badge" style="display: none;">0</span>
+                </button>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="user-profile">
+                    <i class="fa-solid fa-user-astronaut profile-avatar"></i>
+                    <div class="profile-info">
+                        <span class="profile-name">dev_user</span>
+                        <span class="profile-role">Lead Engineer</span>
+                    </div>
+                </div>
+                <div class="auth-notice">
+                    <i class="fa-solid fa-shield-halved"></i> Development Only Auth
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Viewport -->
+        <main class="viewport">
+            
+            <!-- Tab 1: New Engineering Request -->
+            <section class="tab-panel active" id="new-request-panel">
+                <div class="panel-header">
+                    <div>
+                        <h1>New Engineering Request</h1>
+                        <p class="panel-subtitle">Describe what you would like to engineer and review the specification live.</p>
+                    </div>
+                    <div class="session-actions" id="intake-actions-container" style="display: none;">
+                        <button class="btn btn-primary btn-glow" id="start-project-btn">
+                            <i class="fa-solid fa-circle-check"></i> Approve & Start Engineering
+                        </button>
+                    </div>
+                </div>
+
+                <div class="intake-workspace">
+                    <!-- Left Chat Area -->
+                    <div class="chat-column">
+                        <div class="chat-messages-container" id="chat-messages">
+                            <!-- Messages injected dynamically -->
+                        </div>
+                        <div class="chat-input-area">
+                            <div class="textarea-wrapper">
+                                <textarea id="chat-input" placeholder="Describe your product requirements, stack constraints, or paste documentation..." rows="1"></textarea>
+                                <button id="send-chat-btn" class="btn-send" title="Send Request">
+                                    <i class="fa-solid fa-arrow-up"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right Spec Preview -->
+                    <div class="spec-column">
+                        <div class="spec-column-header">
+                            <i class="fa-solid fa-file-invoice"></i>
+                            <span>Live Engineering Specification</span>
+                            <span class="spec-status-badge" id="spec-status">Drafting</span>
+                        </div>
+                        <div class="spec-content-preview markdown-body" id="spec-preview">
+                            <div class="spec-placeholder">
+                                <i class="fa-solid fa-wand-magic-sparkles placeholder-icon"></i>
+                                <h3>Specification Preview</h3>
+                                <p>Begin chatting with the Intake Coordinator. As your request becomes clear, the official specification will generate here in real time.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Tab 2: Projects & Status -->
+            <section class="tab-panel" id="projects-panel">
+                <div class="projects-layout">
+                    <!-- Left Project List Column -->
+                    <div class="projects-list-column">
+                        <div class="column-header">
+                            <h2>Engineering Portfolio</h2>
+                        </div>
+                        <div class="projects-list" id="projects-list-container">
+                            <!-- Projects injected dynamically -->
+                        </div>
+                    </div>
+
+                    <!-- Right Project Details Column -->
+                    <div class="project-details-column" id="project-details-container">
+                        <!-- Default placeholder -->
+                        <div class="detail-placeholder">
+                            <i class="fa-solid fa-diagram-project detail-placeholder-icon"></i>
+                            <h3>Select a Project</h3>
+                            <p>Select a project from the portfolio list to review active discipline status, specifications, event journals, and generated passports.</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Tab 3: Organization Journal -->
+            <section class="tab-panel" id="journal-panel">
+                <div class="panel-header">
+                    <div>
+                        <h1>Engineering Journal</h1>
+                        <p class="panel-subtitle">Chronological timeline of decisions and activities across the entire engineering organization.</p>
+                    </div>
+                    <div class="filter-controls">
+                        <div class="search-box">
+                            <i class="fa-solid fa-magnifying-glass"></i>
+                            <input type="text" id="journal-search" placeholder="Filter journal logs...">
+                        </div>
+                        <select id="journal-source-filter" class="form-select">
+                            <option value="">All Disciplines</option>
+                            <option value="intake_service">Intake Coordinator</option>
+                            <option value="workflow_engine">Workflow Engine</option>
+                            <option value="agent_coordinator">Coordinator Agent</option>
+                            <option value="agent_architect">Architect Agent</option>
+                            <option value="agent_builder">Builder Agent</option>
+                            <option value="agent_reviewer">Reviewer Agent</option>
+                            <option value="agent_qa">QA Agent</option>
+                            <option value="agent_platform">Platform Agent</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="journal-timeline-container" id="global-journal-container">
+                    <!-- Global Journal Timeline injected dynamically -->
+                </div>
+            </section>
+
+            <!-- Tab 4: Engineering Passports -->
+            <section class="tab-panel" id="passports-panel">
+                <div class="panel-header">
+                    <div>
+                        <h1>Engineering Passports</h1>
+                        <p class="panel-subtitle">Review official passports and operations documentation for successfully deployed projects.</p>
+                    </div>
+                </div>
+
+                <div class="passports-workspace">
+                    <!-- Left Passports Folder Tree -->
+                    <div class="passports-sidebar">
+                        <div class="passport-folder-header">
+                            <i class="fa-solid fa-vault"></i>
+                            <span>Passport Directory</span>
+                        </div>
+                        <div class="passport-tree-list" id="passport-tree-container">
+                            <!-- Folders of passports injected dynamically -->
+                        </div>
+                    </div>
+
+                    <!-- Right Passport Viewer -->
+                    <div class="passport-viewer-column" id="passport-viewer-content">
+                        <div class="passport-viewer-placeholder">
+                            <i class="fa-solid fa-passport viewer-placeholder-icon"></i>
+                            <h3>Select a Passport</h3>
+                            <p>Select a completed project passport folder on the left to read its engineering architecture blueprints and deployment guides.</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Tab 5: Shared Knowledge Board -->
+            <section class="tab-panel" id="knowledge-panel">
+                <div class="panel-header">
+                    <div>
+                        <h1>Shared Knowledge</h1>
+                        <p class="panel-subtitle">Review proposed learnings from engineering runs and browse curated team playbooks.</p>
+                    </div>
+                </div>
+
+                <div class="passports-workspace">
+                    <!-- Left Sidebar List (reuse styles from tree-list) -->
+                    <div class="passports-sidebar">
+                        <div class="knowledge-subtabs" style="display: flex; gap: 0.5rem; margin-bottom: 1rem; border-bottom: 1px solid hsl(var(--border-color)); padding-bottom: 0.75rem;">
+                            <button class="tab-link active" id="knowledge-tab-candidates" style="font-size: 0.8rem; padding: 0.5rem; flex: 1; text-align: center;">Candidates</button>
+                            <button class="tab-link" id="knowledge-tab-vault" style="font-size: 0.8rem; padding: 0.5rem; flex: 1; text-align: center;">Active Vault</button>
+                        </div>
+                        <div class="passport-tree-list" id="knowledge-items-list">
+                            <!-- Items injected dynamically -->
+                        </div>
+                    </div>
+
+                    <!-- Right Detail Panel -->
+                    <div class="passport-viewer-column" id="knowledge-detail-content">
+                        <div class="detail-placeholder">
+                            <i class="fa-solid fa-brain detail-placeholder-icon"></i>
+                            <h3>Knowledge Curation Board</h3>
+                            <p>Select a proposed knowledge candidate to approve it for team-wide use or browse curated coding standards and playbooks.</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Modals -->
+    <div class="modal-overlay" id="json-modal">
+        <div class="modal-card">
+            <div class="modal-header">
+                <span class="modal-title">Activity Payload Details</span>
+                <button class="modal-close-btn" id="close-modal-btn"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="modal-body">
+                <pre><code class="language-json" id="modal-json-content"></code></pre>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main JS application -->
+    <script src="/app.js"></script>
+</body>
+</html>

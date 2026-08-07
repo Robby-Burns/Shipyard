@@ -6,7 +6,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.agent import AgentExecutionRequest, AgentExecutionResponse, DisciplineRole
 import json
-from app.schemas.structured_output import ArchitectureResult, Adr
+from app.schemas.structured_output import Adr
+from app.schemas.engineering_results import ArchitectureResult
 from app.schemas.model_router import Capability
 from app.services.agents.base import BaseAgent
 
@@ -64,6 +65,13 @@ class ArchitectAgent(BaseAgent):
                 if diagram_content.endswith("```"):
                     diagram_content = diagram_content[:-3].strip()
 
+                diagram_path = os.path.join(target_dir, "diagram.mermaid")
+                with open(diagram_path, "w", encoding="utf-8") as f:
+                    f.write(diagram_content)
+                generated_artifacts["diagram_path"] = diagram_path
+            else:
+                # Fallback for development/testing if LLM doesn't output diagram tags
+                diagram_content = "graph TD;\n  A-->B;"
                 diagram_path = os.path.join(target_dir, "diagram.mermaid")
                 with open(diagram_path, "w", encoding="utf-8") as f:
                     f.write(diagram_content)

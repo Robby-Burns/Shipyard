@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Literal
 
 class ADR(BaseModel):
     id: str = Field(..., description="ADR identifier, e.g., 'ADR-001'")
@@ -12,21 +12,21 @@ class ArchitectureData(BaseModel):
     adrs: List[ADR] = Field(default_factory=list, description="List of ADR objects")
 
 class ArchitectureResult(BaseModel):
-    role: str = Field("architect", const=True)
+    role: Literal["architect"] = "architect"
     status: str = Field(..., description="Result status, e.g., 'completed'")
     architecture: ArchitectureData
     warnings: List[str] = Field(default_factory=list)
     recommendations: List[str] = Field(default_factory=list)
 
 class ReviewResult(BaseModel):
-    role: str = Field("reviewer", const=True)
+    role: Literal["reviewer"] = "reviewer"
     status: str = Field(..., description="'approved' or 'request_changes'")
     summary: Optional[str] = None
     findings: List[str] = Field(default_factory=list)
     required_changes: List[str] = Field(default_factory=list)
 
 class QAResult(BaseModel):
-    role: str = Field("qa", const=True)
+    role: Literal["qa"] = "qa"
     status: str = Field(..., description="'passed' or 'failed'")
     coverage: Optional[float] = None
     performance: Optional[str] = None
@@ -40,7 +40,7 @@ class KnowledgeCandidate(BaseModel):
     content: str
 
 class PlatformResult(BaseModel):
-    role: str = Field("platform", const=True)
+    role: Literal["platform"] = "platform"
     metrics: Dict[str, Any] = Field(default_factory=dict)
     recommendations: List[str] = Field(default_factory=list)
     knowledge_candidates: List[KnowledgeCandidate] = Field(default_factory=list)

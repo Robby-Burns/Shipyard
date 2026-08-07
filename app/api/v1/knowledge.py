@@ -9,6 +9,7 @@ from app.schemas.knowledge import (
     KnowledgeItemCreate,
     KnowledgeItemResponse,
     KnowledgePromotionRequest,
+    KnowledgeRejectionRequest,
 )
 from app.services.auth import get_current_user
 from app.services.knowledge_service import KnowledgeService
@@ -44,6 +45,22 @@ async def approve_knowledge(
 ):
     service = KnowledgeService(db)
     updated_item = await service.approve_and_promote(item_id, promotion_req)
+    if not updated_item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge item not found"
+        )
+    return updated_item
+
+
+@router.post("/{item_id}/reject", response_model=KnowledgeItemResponse)
+async def reject_knowledge(
+    item_id: uuid.UUID,
+    rejection_req: KnowledgeRejectionRequest,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    service = KnowledgeService(db)
+    updated_item = await service.reject_candidate(item_id, rejection_req)
     if not updated_item:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge item not found"

@@ -48,3 +48,8 @@ class KnowledgeItemResponse(BaseModel):
 class KnowledgePromotionRequest(BaseModel):
     approved_by: str
     comments: Optional[str] = None
+
+
+class KnowledgeRejectionRequest(BaseModel):
+    rejected_by: str
+    comments: Optional[str] = None
