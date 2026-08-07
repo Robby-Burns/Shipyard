@@ -2,8 +2,7 @@ from datetime import datetime, timezone
 import uuid
 from typing import Any, Dict, Optional
 
-from sqlalchemy import JSON, DateTime, String
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import JSON, DateTime, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.session import Base
@@ -13,7 +12,7 @@ class ActivityLog(Base):
     __tablename__ = "activity_logs"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
     event_type: Mapped[str] = mapped_column(
         String(100), index=True, nullable=False

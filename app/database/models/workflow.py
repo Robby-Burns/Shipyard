@@ -2,8 +2,7 @@ from datetime import datetime, timezone
 import uuid
 from typing import Any, Dict, Optional
 
-from sqlalchemy import JSON, DateTime, String, Text, Enum as SQLEnum
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import JSON, DateTime, String, Text, Enum as SQLEnum, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.session import Base
@@ -14,7 +13,7 @@ class WorkflowRun(Base):
     __tablename__ = "workflow_runs"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     status: Mapped[WorkflowStatus] = mapped_column(

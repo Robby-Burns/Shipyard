@@ -43,8 +43,7 @@ except Exception:  # pragma: no cover
         def copy(self, **kw):
             return Vector(self.dim, **kw)
 
-from sqlalchemy import JSON, DateTime, String, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import JSON, DateTime, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.session import Base
@@ -54,7 +53,7 @@ class MemoryRecord(Base):
     __tablename__ = "memory_records"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        Uuid, primary_key=True, default=uuid.uuid4
     )
     category: Mapped[str] = mapped_column(
         String(50), index=True, nullable=False

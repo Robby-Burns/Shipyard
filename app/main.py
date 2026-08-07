@@ -5,9 +5,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.health import router as health_router
 from app.api.v1.activity_logs import router as activity_log_router
 from app.api.v1.agents import router as agents_router
+from app.api.v1.console import router as console_router
 from app.api.v1.knowledge import router as knowledge_router
 from app.api.v1.maintenance import router as maintenance_router
 from app.api.v1.memory_gateway import router as memory_gateway_router
+from app.api.v1.metrics import router as metrics_router
 from app.api.v1.model_router import router as model_router_router
 from app.api.v1.tool_gateway import router as tool_gateway_router
 from app.api.v1.workflows import router as workflows_router
@@ -55,6 +57,8 @@ app.include_router(knowledge_router)
 app.include_router(maintenance_router)
 app.include_router(agents_router)
 app.include_router(workflows_router)
+app.include_router(metrics_router)
+app.include_router(console_router)
 
 
 @app.get("/")
