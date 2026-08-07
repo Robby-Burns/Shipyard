@@ -13,7 +13,7 @@ class ToolName(str, Enum):
 
 class ToolExecutionRequest(BaseModel):
     tool: ToolName
-    action: str
+    action: str = Field(..., max_length=100)
     payload: Dict[str, Any] = Field(default_factory=dict)
 
 

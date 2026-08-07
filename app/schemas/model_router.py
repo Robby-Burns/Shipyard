@@ -18,7 +18,7 @@ class ChatMessage(BaseModel):
 
 class ModelRouteRequest(BaseModel):
     capability: Capability
-    messages: List[ChatMessage]
+    messages: List[ChatMessage] = Field(..., min_length=1)
     temperature: Optional[float] = 0.2
     max_tokens: Optional[int] = 2000
     metadata: Optional[Dict[str, Any]] = None

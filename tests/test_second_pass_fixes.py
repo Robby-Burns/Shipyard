@@ -15,9 +15,12 @@ from app.database.models.memory import MemoryRecord
 from app.schemas.agent import AgentExecutionRequest, DisciplineRole
 from app.schemas.memory import MemoryRecordCreate, MemorySearchRequest, MemoryCategory
 from app.schemas.model_router import Capability, ModelRouteRequest, ChatMessage
+from app.schemas.tool_gateway import ToolExecutionRequest, ToolName
+from app.schemas.workflow import WorkflowCreateRequest, WorkflowEscalationRequest, WorkflowResolutionRequest, WorkflowStatus
 from app.services.agents.base import BaseAgent
 from app.services.model_router import ModelRouterService
 from app.services.memory_cleanup import MemoryCleanupService
+from app.services.workflow_engine import WorkflowEngineService
 from app.infrastructure.ratelimit_middleware import rate_limit_store
 
 
@@ -222,3 +225,106 @@ async def test_memory_cleanup_case_insensitive(async_session: AsyncSession):
     
     # All 3 records must be deleted by func.lower case insensitivity query
     assert deleted == 3
+
+
+# ==========================================
+# 5. Workflow Engine & Schema Enhancements
+# ==========================================
+
+@pytest.mark.anyio
+async def test_escalate_workflow_final_state_guard(async_session: AsyncSession):
+    engine = WorkflowEngineService(async_session)
+    
+    # Create and approve/complete workflow
+    wf = await engine.create_workflow(
+        WorkflowCreateRequest(title="Final test", specification="spec"),
+        owner_id="user_123"
+    )
+    
+    # Force state to COMPLETED
+    wf.status = WorkflowStatus.COMPLETED
+    await async_session.commit()
+    
+    with pytest.raises(ValueError) as exc_info:
+        await engine.escalate_workflow(
+            wf.id,
+            WorkflowEscalationRequest(reason="too late", escalated_by="reviewer")
+        )
+    assert "Cannot escalate" in str(exc_info.value)
+
+
+@pytest.mark.anyio
+async def test_resolve_escalation_restart_resets_approvals(async_session: AsyncSession):
+    engine = WorkflowEngineService(async_session)
+    
+    # Create and escalate workflow
+    wf = await engine.create_workflow(
+        WorkflowCreateRequest(title="Approval reset test", specification="spec"),
+        owner_id="user_123"
+    )
+    
+    # Simulate approved state
+    wf.status = WorkflowStatus.ESCALATED
+    wf.approved_by = "boss"
+    wf.approved_at = datetime.now(timezone.utc)
+    await async_session.commit()
+    
+    # Resolve with restart
+    wf = await engine.resolve_escalation(
+        wf.id,
+        WorkflowResolutionRequest(resolved_by="admin", resolution_notes="restart it", action="restart")
+    )
+    
+    assert wf.status == WorkflowStatus.CREATED
+    assert wf.approved_by is None
+    assert wf.approved_at is None
+
+
+@pytest.mark.anyio
+async def test_list_workflows_scoping_and_pagination(async_session: AsyncSession):
+    engine = WorkflowEngineService(async_session)
+    
+    # Create workflows under different owners
+    await engine.create_workflow(
+        WorkflowCreateRequest(title="W1", specification="spec"), owner_id="user_A"
+    )
+    await engine.create_workflow(
+        WorkflowCreateRequest(title="W2", specification="spec"), owner_id="user_A"
+    )
+    await engine.create_workflow(
+        WorkflowCreateRequest(title="W3", specification="spec"), owner_id="user_B"
+    )
+    
+    # List for user_A
+    res_A = await engine.list_workflows(owner_id="user_A")
+    assert len(res_A) == 2
+    assert res_A[0].title in ["W1", "W2"]
+    
+    # List for user_B
+    res_B = await engine.list_workflows(owner_id="user_B")
+    assert len(res_B) == 1
+    assert res_B[0].title == "W3"
+    
+    # Test pagination
+    res_pag = await engine.list_workflows(owner_id="user_A", limit=1, offset=0)
+    assert len(res_pag) == 1
+
+
+def test_tool_execution_request_action_validation():
+    # Long action string must fail validation
+    long_action = "a" * 101
+    with pytest.raises(ValidationError):
+        ToolExecutionRequest(
+            tool=ToolName.GITHUB,
+            action=long_action,
+            payload={}
+        )
+
+
+def test_model_route_request_empty_messages_validation():
+    # Empty messages list must fail validation
+    with pytest.raises(ValidationError):
+        ModelRouteRequest(
+            capability=Capability.CODING,
+            messages=[]
+        )

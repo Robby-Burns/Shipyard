@@ -29,17 +29,23 @@ async def create_workflow(
 ):
     service = WorkflowEngineService(db)
     return await service.create_workflow(
-        req, request_id=getattr(request.state, "request_id", None)
+        req,
+        owner_id=user.get("sub"),
+        request_id=getattr(request.state, "request_id", None),
     )
 
 
 @router.get("", response_model=List[WorkflowRunResponse])
 async def list_workflows(
+    limit: int = 100,
+    offset: int = 0,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
     service = WorkflowEngineService(db)
-    return await service.list_workflows()
+    return await service.list_workflows(
+        owner_id=user.get("sub"), limit=limit, offset=offset
+    )
 
 
 @router.get("/{workflow_id}", response_model=WorkflowRunResponse)

@@ -16,6 +16,9 @@ class WorkflowRun(Base):
         Uuid, primary_key=True, default=uuid.uuid4
     )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
+    owner_id: Mapped[Optional[str]] = mapped_column(
+        String(100), index=True, nullable=True
+    )
     status: Mapped[WorkflowStatus] = mapped_column(
         SQLEnum(WorkflowStatus),
         default=WorkflowStatus.CREATED,

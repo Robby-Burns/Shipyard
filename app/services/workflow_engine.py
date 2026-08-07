@@ -34,7 +34,7 @@ class WorkflowEngineService:
         self.activity_log = ActivityLogService(db)
 
     async def create_workflow(
-        self, req: WorkflowCreateRequest, request_id: Optional[str] = None
+        self, req: WorkflowCreateRequest, owner_id: Optional[str] = None, request_id: Optional[str] = None
     ) -> WorkflowRun:
         """Initialize a new engineering workflow run from a spec."""
         workflow = WorkflowRun(
@@ -43,6 +43,7 @@ class WorkflowEngineService:
             status=WorkflowStatus.CREATED,
             current_step="created",
             artifacts={},
+            owner_id=owner_id,
         )
         self.db.add(workflow)
         await self.db.commit()
@@ -82,15 +83,22 @@ class WorkflowEngineService:
         if workflow.status == WorkflowStatus.CREATED:
             workflow.status = WorkflowStatus.PLANNING
             workflow.current_step = "coordinator_planning"
+            specification = workflow.specification
             await self.db.commit()
+            await self.db.close()
 
             agent = CoordinatorAgent(self.db)
             exec_res = await agent.run(
                 AgentExecutionRequest(
-                    role=agent.role, task_input=workflow.specification
+                    role=agent.role, task_input=specification
                 ),
                 request_id=request_id,
             )
+
+            result = await self.db.execute(
+                select(WorkflowRun).where(WorkflowRun.id == workflow_id)
+            )
+            workflow = result.scalar_one()
             new_artifacts = dict(workflow.artifacts)
             new_artifacts["build_plan"] = exec_res.output_text
             workflow.artifacts = new_artifacts
@@ -100,15 +108,25 @@ class WorkflowEngineService:
 
         # Step 2: DESIGNING -> BUILDING (Architect)
         elif workflow.status == WorkflowStatus.DESIGNING:
+            specification = workflow.specification
+            build_plan = workflow.artifacts.get("build_plan")
+            await self.db.commit()
+            await self.db.close()
+
             agent = ArchitectAgent(self.db)
             exec_res = await agent.run(
                 AgentExecutionRequest(
                     role=agent.role,
-                    task_input=workflow.specification,
-                    context={"build_plan": workflow.artifacts.get("build_plan")},
+                    task_input=specification,
+                    context={"build_plan": build_plan},
                 ),
                 request_id=request_id,
             )
+
+            result = await self.db.execute(
+                select(WorkflowRun).where(WorkflowRun.id == workflow_id)
+            )
+            workflow = result.scalar_one()
             new_artifacts = dict(workflow.artifacts)
             new_artifacts["architecture_doc"] = exec_res.output_text
             workflow.artifacts = new_artifacts
@@ -118,20 +136,29 @@ class WorkflowEngineService:
 
         # Step 3: BUILDING -> REVIEWING (Builder)
         elif workflow.status == WorkflowStatus.BUILDING:
+            specification = workflow.specification
+            build_plan = workflow.artifacts.get("build_plan")
+            architecture_doc = workflow.artifacts.get("architecture_doc")
+            await self.db.commit()
+            await self.db.close()
+
             agent = BuilderAgent(self.db)
             exec_res = await agent.run(
                 AgentExecutionRequest(
                     role=agent.role,
-                    task_input=workflow.specification,
+                    task_input=specification,
                     context={
-                        "build_plan": workflow.artifacts.get("build_plan"),
-                        "architecture_doc": workflow.artifacts.get(
-                            "architecture_doc"
-                        ),
+                        "build_plan": build_plan,
+                        "architecture_doc": architecture_doc,
                     },
                 ),
                 request_id=request_id,
             )
+
+            result = await self.db.execute(
+                select(WorkflowRun).where(WorkflowRun.id == workflow_id)
+            )
+            workflow = result.scalar_one()
             new_artifacts = dict(workflow.artifacts)
             new_artifacts["generated_code"] = exec_res.output_text
             workflow.artifacts = new_artifacts
@@ -141,20 +168,28 @@ class WorkflowEngineService:
 
         # Step 4: REVIEWING -> TESTING (Reviewer)
         elif workflow.status == WorkflowStatus.REVIEWING:
+            generated_code = workflow.artifacts.get("generated_code")
+            architecture_doc = workflow.artifacts.get("architecture_doc")
+            await self.db.commit()
+            await self.db.close()
+
             agent = ReviewerAgent(self.db)
             exec_res = await agent.run(
                 AgentExecutionRequest(
                     role=agent.role,
                     task_input="Review generated code and implementation",
                     context={
-                        "generated_code": workflow.artifacts.get("generated_code"),
-                        "architecture_doc": workflow.artifacts.get(
-                            "architecture_doc"
-                        ),
+                        "generated_code": generated_code,
+                        "architecture_doc": architecture_doc,
                     },
                 ),
                 request_id=request_id,
             )
+
+            result = await self.db.execute(
+                select(WorkflowRun).where(WorkflowRun.id == workflow_id)
+            )
+            workflow = result.scalar_one()
             new_artifacts = dict(workflow.artifacts)
             new_artifacts["code_review"] = exec_res.output_text
             workflow.artifacts = new_artifacts
@@ -164,6 +199,11 @@ class WorkflowEngineService:
 
         # Step 5: TESTING -> AWAITING_APPROVAL (QA)
         elif workflow.status == WorkflowStatus.TESTING:
+            generated_code = workflow.artifacts.get("generated_code")
+            code_review = workflow.artifacts.get("code_review")
+            await self.db.commit()
+            await self.db.close()
+
             agent = QAAgent(self.db)
             exec_res = await agent.run(
                 AgentExecutionRequest(
@@ -173,12 +213,17 @@ class WorkflowEngineService:
                         " validation"
                     ),
                     context={
-                        "generated_code": workflow.artifacts.get("generated_code"),
-                        "code_review": workflow.artifacts.get("code_review"),
+                        "generated_code": generated_code,
+                        "code_review": code_review,
                     },
                 ),
                 request_id=request_id,
             )
+
+            result = await self.db.execute(
+                select(WorkflowRun).where(WorkflowRun.id == workflow_id)
+            )
+            workflow = result.scalar_one()
             new_artifacts = dict(workflow.artifacts)
             new_artifacts["qa_report"] = exec_res.output_text
             workflow.artifacts = new_artifacts
@@ -217,6 +262,11 @@ class WorkflowEngineService:
 
         if not workflow:
             raise ValueError(f"Workflow run {workflow_id} not found")
+
+        if workflow.status in [WorkflowStatus.COMPLETED, WorkflowStatus.FAILED]:
+            raise ValueError(
+                f"Cannot escalate workflow run {workflow_id} in final state '{workflow.status.value}'"
+            )
 
         workflow.status = WorkflowStatus.ESCALATED
         workflow.error_message = f"Escalated by {req.escalated_by}: {req.reason}"
@@ -262,6 +312,8 @@ class WorkflowEngineService:
             workflow.status = WorkflowStatus.CREATED
             workflow.current_step = "created"
             workflow.artifacts = {}
+            workflow.approved_by = None
+            workflow.approved_at = None
         elif req.action == "terminate":
             workflow.status = WorkflowStatus.FAILED
         else:
@@ -326,8 +378,13 @@ class WorkflowEngineService:
         )
         return result.scalar_one_or_none()
 
-    async def list_workflows(self) -> List[WorkflowRun]:
-        result = await self.db.execute(
-            select(WorkflowRun).order_by(WorkflowRun.created_at.desc())
-        )
+    async def list_workflows(
+        self, owner_id: Optional[str] = None, limit: int = 100, offset: int = 0
+    ) -> List[WorkflowRun]:
+        stmt = select(WorkflowRun)
+        if owner_id:
+            stmt = stmt.where(WorkflowRun.owner_id == owner_id)
+        stmt = stmt.order_by(WorkflowRun.created_at.desc(), WorkflowRun.id.desc())
+        stmt = stmt.limit(limit).offset(offset)
+        result = await self.db.execute(stmt)
         return list(result.scalars().all())

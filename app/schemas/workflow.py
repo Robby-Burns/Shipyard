@@ -53,5 +53,6 @@ class WorkflowRunResponse(BaseModel):
     approved_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
+    owner_id: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
