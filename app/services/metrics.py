@@ -28,27 +28,23 @@ class MetricsService:
         self.db = db
 
     async def get_workflow_metrics(self) -> WorkflowMetrics:
-        """Calculate workflow lifecycle counts and completion percentage."""
-        res = await self.db.execute(select(WorkflowRun))
-        workflows = list(res.scalars().all())
-
-        total_runs = len(workflows)
-        if total_runs == 0:
+        """Calculate workflow lifecycle counts and completion percentage using DB aggregation."""
+        # Total runs
+        total_runs = await self.db.scalar(select(func.count()).select_from(WorkflowRun))
+        if not total_runs:
             return WorkflowMetrics()
-
-        completed_count = sum(
-            1 for w in workflows if w.status == WorkflowStatus.COMPLETED
+        # Conditional counts
+        completed_count = await self.db.scalar(
+            select(func.count()).where(WorkflowRun.status == WorkflowStatus.COMPLETED)
         )
-        failed_count = sum(
-            1 for w in workflows if w.status == WorkflowStatus.FAILED
+        failed_count = await self.db.scalar(
+            select(func.count()).where(WorkflowRun.status == WorkflowStatus.FAILED)
         )
-        escalated_count = sum(
-            1 for w in workflows if w.status == WorkflowStatus.ESCALATED
+        escalated_count = await self.db.scalar(
+            select(func.count()).where(WorkflowRun.status == WorkflowStatus.ESCALATED)
         )
         active_count = total_runs - (completed_count + failed_count + escalated_count)
-
-        completion_rate_pct = round((completed_count / total_runs) * 100, 2)
-
+        completion_rate_pct = round((completed_count / total_runs) * 100, 2) if total_runs else 0.0
         return WorkflowMetrics(
             total_runs=total_runs,
             active_count=active_count,

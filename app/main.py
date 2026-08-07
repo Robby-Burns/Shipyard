@@ -13,6 +13,8 @@ from app.api.v1.metrics import router as metrics_router
 from app.api.v1.model_router import router as model_router_router
 from app.api.v1.tool_gateway import router as tool_gateway_router
 from app.api.v1.workflows import router as workflows_router
+from app.api.v1.intake import router as intake_router
+from app.api.v1.auth import router as auth_router
 from app.config.settings import settings
 from app.infrastructure.auth_middleware import AuthMiddleware
 from app.infrastructure.exceptions import (
@@ -23,6 +25,7 @@ from app.infrastructure.logging import setup_logging
 from app.infrastructure.middleware import RequestContextMiddleware
 from app.infrastructure.ratelimit_middleware import RateLimitMiddleware
 from app.services.auth import get_current_user
+from fastapi.staticfiles import StaticFiles
 
 # Initialize logging configuration
 setup_logging()
@@ -57,13 +60,13 @@ app.include_router(knowledge_router)
 app.include_router(maintenance_router)
 app.include_router(agents_router)
 app.include_router(workflows_router)
+app.include_router(intake_router)
+app.include_router(auth_router)
 app.include_router(metrics_router)
 app.include_router(console_router)
 
-
-@app.get("/")
-async def root():
-    return {"message": "Shipyard Platform Operational", "env": settings.app_env}
+# Mount static frontend
+app.mount("/", StaticFiles(directory="frontend", html=True), name="static")
 
 
 # Protected Test Route

@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import List, Optional
+import os
 import uuid
-
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
@@ -22,6 +22,7 @@ from app.services.agents import (
     CoordinatorAgent,
     QAAgent,
     ReviewerAgent,
+    PlatformAgent,
 )
 
 logger = structlog.get_logger()
@@ -85,7 +86,7 @@ class WorkflowEngineService:
             workflow.current_step = "coordinator_planning"
             specification = workflow.specification
             await self.db.commit()
-            await self.db.close()
+            # await self.db.close()  # Removed: session managed by FastAPI
 
             agent = CoordinatorAgent(self.db)
             exec_res = await agent.run(
@@ -111,14 +112,17 @@ class WorkflowEngineService:
             specification = workflow.specification
             build_plan = workflow.artifacts.get("build_plan")
             await self.db.commit()
-            await self.db.close()
+            # await self.db.close()  # Removed: session managed by FastAPI
 
             agent = ArchitectAgent(self.db)
             exec_res = await agent.run(
                 AgentExecutionRequest(
                     role=agent.role,
                     task_input=specification,
-                    context={"build_plan": build_plan},
+                    context={
+                        "build_plan": build_plan,
+                        "workflow_id": str(workflow_id),
+                    },
                 ),
                 request_id=request_id,
             )
@@ -129,6 +133,8 @@ class WorkflowEngineService:
             workflow = result.scalar_one()
             new_artifacts = dict(workflow.artifacts)
             new_artifacts["architecture_doc"] = exec_res.output_text
+            if exec_res.artifacts:
+                new_artifacts.update(exec_res.artifacts)
             workflow.artifacts = new_artifacts
             workflow.status = WorkflowStatus.BUILDING
             workflow.current_step = "builder_building"
@@ -140,7 +146,7 @@ class WorkflowEngineService:
             build_plan = workflow.artifacts.get("build_plan")
             architecture_doc = workflow.artifacts.get("architecture_doc")
             await self.db.commit()
-            await self.db.close()
+            # await self.db.close()  # Removed: session managed by FastAPI
 
             agent = BuilderAgent(self.db)
             exec_res = await agent.run(
@@ -161,6 +167,8 @@ class WorkflowEngineService:
             workflow = result.scalar_one()
             new_artifacts = dict(workflow.artifacts)
             new_artifacts["generated_code"] = exec_res.output_text
+            if exec_res.artifacts:
+                new_artifacts.update(exec_res.artifacts)
             workflow.artifacts = new_artifacts
             workflow.status = WorkflowStatus.REVIEWING
             workflow.current_step = "reviewer_reviewing"
@@ -171,7 +179,7 @@ class WorkflowEngineService:
             generated_code = workflow.artifacts.get("generated_code")
             architecture_doc = workflow.artifacts.get("architecture_doc")
             await self.db.commit()
-            await self.db.close()
+            # await self.db.close()  # Removed: session managed by FastAPI
 
             agent = ReviewerAgent(self.db)
             exec_res = await agent.run(
@@ -192,17 +200,38 @@ class WorkflowEngineService:
             workflow = result.scalar_one()
             new_artifacts = dict(workflow.artifacts)
             new_artifacts["code_review"] = exec_res.output_text
+            if exec_res.artifacts:
+                new_artifacts.update(exec_res.artifacts)
             workflow.artifacts = new_artifacts
-            workflow.status = WorkflowStatus.TESTING
-            workflow.current_step = "qa_testing"
-            await self.db.commit()
 
-        # Step 5: TESTING -> AWAITING_APPROVAL (QA)
+            # Handle code review rejection / request changes
+            review_status = exec_res.artifacts.get("status") if exec_res.artifacts else "approved"
+            if review_status == "request_changes":
+                workflow.status = WorkflowStatus.ESCALATED
+                workflow.error_message = f"Code Review Rejected: {exec_res.artifacts.get('reason', 'changes requested')}"
+                await self.db.commit()
+                # Log the escalation event
+                await self.activity_log.record(
+                    event_type="workflow_escalated",
+                    source="workflow_engine",
+                    request_id=request_id,
+                    payload={
+                        "workflow_id": str(workflow.id),
+                        "escalated_by": "reviewer",
+                        "reason": workflow.error_message,
+                    },
+                )
+            else:
+                workflow.status = WorkflowStatus.TESTING
+                workflow.current_step = "qa_testing"
+                await self.db.commit()
+
+        # Step 5: TESTING -> AWAITING_APPROVAL (QA & Platform)
         elif workflow.status == WorkflowStatus.TESTING:
             generated_code = workflow.artifacts.get("generated_code")
             code_review = workflow.artifacts.get("code_review")
             await self.db.commit()
-            await self.db.close()
+            # await self.db.close()  # Removed: session managed by FastAPI
 
             agent = QAAgent(self.db)
             exec_res = await agent.run(
@@ -226,10 +255,73 @@ class WorkflowEngineService:
             workflow = result.scalar_one()
             new_artifacts = dict(workflow.artifacts)
             new_artifacts["qa_report"] = exec_res.output_text
+            if exec_res.artifacts:
+                new_artifacts.update(exec_res.artifacts)
             workflow.artifacts = new_artifacts
-            workflow.status = WorkflowStatus.AWAITING_APPROVAL
-            workflow.current_step = "awaiting_human_production_approval"
-            await self.db.commit()
+
+            qa_status = exec_res.artifacts.get("qa_status") if exec_res.artifacts else "PASSED"
+            if qa_status == "FAILED":
+                workflow.status = WorkflowStatus.ESCALATED
+                workflow.error_message = "QA Verification Failed: acceptance criteria not satisfied."
+                await self.db.commit()
+                # Log the escalation event
+                await self.activity_log.record(
+                    event_type="workflow_escalated",
+                    source="workflow_engine",
+                    request_id=request_id,
+                    payload={
+                        "workflow_id": str(workflow.id),
+                        "escalated_by": "qa",
+                        "reason": workflow.error_message,
+                    },
+                )
+            else:
+                # QA Passed -> Execute Platform Agent to gather metrics & log recommendations
+                platform_agent = PlatformAgent(self.db)
+                platform_res = await platform_agent.run(
+                    AgentExecutionRequest(
+                        role=platform_agent.role,
+                        task_input="Analyze pipeline latency metrics and operational recommendations",
+                        context={
+                            "workflow_id": str(workflow_id),
+                            "qa_report": exec_res.output_text,
+                        }
+                    ),
+                    request_id=request_id
+                )
+
+                new_artifacts["platform_recommendations"] = platform_res.output_text
+                if platform_res.artifacts:
+                    new_artifacts.update(platform_res.artifacts)
+                workflow.artifacts = new_artifacts
+
+                # Propose candidates for Shared Knowledge if identified
+                knowledge_candidate = platform_res.artifacts.get("knowledge_candidate") if platform_res.artifacts else None
+                if knowledge_candidate:
+                    from app.services.knowledge_service import KnowledgeService
+                    from app.schemas.knowledge import KnowledgeItemCreate, MemoryTier
+                    ks = KnowledgeService(self.db)
+                    await ks.propose_candidate(KnowledgeItemCreate(
+                        title=f"Platform Knowledge Candidate for run {workflow_id}",
+                        tier=MemoryTier.CANDIDATE,
+                        category="platform",
+                        content=knowledge_candidate,
+                    ))
+
+                # Log Platform Recommendations to the journal
+                await self.activity_log.record(
+                    event_type="platform_recommendation",
+                    source="agent_platform",
+                    request_id=request_id,
+                    payload={
+                        "workflow_id": str(workflow.id),
+                        "recommendation": platform_res.output_text,
+                    },
+                )
+
+                workflow.status = WorkflowStatus.AWAITING_APPROVAL
+                workflow.current_step = "awaiting_human_production_approval"
+                await self.db.commit()
 
         await self.db.refresh(workflow)
         return workflow
@@ -302,12 +394,17 @@ class WorkflowEngineService:
             raise ValueError("Workflow is not in an escalated state")
 
         if req.action == "resume":
-            # Resume to current step state prior to escalation
-            workflow.status = (
-                WorkflowStatus.BUILDING
-                if "builder" in workflow.current_step
-                else WorkflowStatus.PLANNING
-            )
+            # Resume to the step that was active prior to escalation.
+            # Mapping based on the naming convention of current_step values.
+            step_to_status = {
+                "builder": WorkflowStatus.BUILDING,
+                "reviewer": WorkflowStatus.REVIEWING,
+                "qa": WorkflowStatus.TESTING,
+                "coordinator": WorkflowStatus.PLANNING,
+            }
+            # Extract the component before the first '_' if present
+            step_key = workflow.current_step.split('_')[0] if workflow.current_step else ""
+            workflow.status = step_to_status.get(step_key, WorkflowStatus.PLANNING)
         elif req.action == "restart":
             workflow.status = WorkflowStatus.CREATED
             workflow.current_step = "created"
@@ -353,6 +450,45 @@ class WorkflowEngineService:
                 "Workflow is not awaiting human production approval"
             )
 
+        # Compile Engineering Passport using Coordinator Agent
+        coordinator = CoordinatorAgent(self.db)
+        pass_res = await coordinator.run(
+            AgentExecutionRequest(
+                role=coordinator.role,
+                task_input="Compile the final Engineering Passport and Deployment Guide based on all pipeline execution artifacts.",
+                context=dict(workflow.artifacts)
+            ),
+            request_id=request_id
+        )
+
+        # Write to disk
+        target_dir = os.path.join("artifacts/passports", str(workflow.id))
+        os.makedirs(target_dir, exist_ok=True)
+
+        passport_path = os.path.join(target_dir, "engineering_passport.md")
+        with open(passport_path, "w", encoding="utf-8") as f:
+            f.write(pass_res.output_text)
+
+        guide_path = os.path.join(target_dir, "deployment_guide.md")
+        guide_content = (
+            "# Production Deployment Guide\n\n"
+            f"Release Tag: rel_{str(workflow.id)[:8]}\n"
+            f"Commit Hash: {workflow.artifacts.get('commit_hash', 'mock-hash')}\n"
+            "Steps:\n"
+            "1. Pull the repository branch containing the commit.\n"
+            "2. Run database migrations: `alembic upgrade head`.\n"
+            "3. Run healthchecks: `/healthz` and `/readyz`.\n"
+            "4. Verify application operations."
+        )
+        with open(guide_path, "w", encoding="utf-8") as f:
+            f.write(guide_content)
+
+        new_artifacts = dict(workflow.artifacts)
+        new_artifacts["engineering_passport_path"] = passport_path
+        new_artifacts["deployment_guide_path"] = guide_path
+        new_artifacts["engineering_passport"] = pass_res.output_text
+        workflow.artifacts = new_artifacts
+
         workflow.status = WorkflowStatus.COMPLETED
         workflow.current_step = "completed_and_deployed"
         workflow.approved_by = req.approved_by
@@ -368,6 +504,8 @@ class WorkflowEngineService:
             payload={
                 "workflow_id": str(workflow.id),
                 "approved_by": req.approved_by,
+                "engineering_passport_path": passport_path,
+                "deployment_guide_path": guide_path,
             },
         )
         return workflow

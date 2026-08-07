@@ -60,6 +60,11 @@ async def get_workflow(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Workflow run not found"
         )
+    # Ownership check
+    if wf.owner_id != user.get("sub"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden"
+        )
     return wf
 
 

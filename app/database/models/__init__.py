@@ -3,6 +3,7 @@ from app.database.models.knowledge import KnowledgeItem
 from app.database.models.memory import MemoryRecord
 from app.database.models.tool_log import ToolExecutionLog
 from app.database.models.workflow import WorkflowRun
+from app.database.models.intake import IntakeSession
 
 __all__ = [
     "ActivityLog",
@@ -10,4 +11,5 @@ __all__ = [
     "MemoryRecord",
     "KnowledgeItem",
     "WorkflowRun",
+    "IntakeSession",
 ]

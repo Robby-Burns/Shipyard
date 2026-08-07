@@ -1,6 +1,12 @@
+import os
+import re
+from app.adapters.sanitizer import sanitize_path_component
+from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.schemas.agent import DisciplineRole
+from app.schemas.agent import AgentExecutionRequest, AgentExecutionResponse, DisciplineRole
+import json
+from app.schemas.structured_output import ArchitectureResult, Adr
 from app.schemas.model_router import Capability
 from app.services.agents.base import BaseAgent
 
@@ -13,15 +19,94 @@ class ArchitectAgent(BaseAgent):
             capability=Capability.ARCHITECTURE,
             db=db,
         )
+        self.artifacts_dir = "artifacts/architecture"
 
     def get_system_prompt(self) -> str:
         return (
             "You are the Architect for the Shipyard Engineering Organization.\n"
-            "Mission: Transform requirements into maintainable, modular technical architecture (architecture.md).\n"
+            "Mission: Design structural blueprints, diagrams, and ADRs based on the Engineering Specification.\n"
             "Responsibilities:\n"
-            "- Define component boundaries, data models, and interface contracts\n"
-            "- Ensure alignment with existing Shared Knowledge and architectural standards\n"
-            "- Optimize for simplicity, maintainability, and security\n"
-            "- Avoid unnecessary complexity; prefer proven, simple patterns.\n"
-            "Output clear technical architecture specifications and design documents."
+            "- Define component interactions and data flow diagrams (use Mermaid format)\n"
+            "- Produce system design records following the standard ADR template\n"
+            "- Translate product requirements into precise technical architecture blueprints.\n\n"
+            "Output Format: Return a single JSON object adhering to the ArchitectureResult schema. Include fields: 'role', 'status', 'architecture' (with 'diagram' path and list of ADRs), 'warnings', and 'recommendations'."
         )
+
+    async def run(
+        self, request: AgentExecutionRequest, request_id: Optional[str] = None
+    ) -> AgentExecutionResponse:
+        # Run base agent logic
+        response = await super().run(request, request_id)
+
+        if response.status == "success":
+            content = response.output_text
+            workflow_id = "default"
+            # Extract and sanitize workflow_id from context if provided
+            if request.context and isinstance(request.context, dict):
+                raw_wf_id = str(request.context.get("workflow_id", "default"))
+                workflow_id = sanitize_path_component(raw_wf_id)
+
+            target_dir = os.path.join(self.artifacts_dir, workflow_id)
+            os.makedirs(target_dir, exist_ok=True)
+
+            generated_artifacts = {}
+
+            # 1. Parse system diagram
+            diagram_match = re.search(r"<diagram>\s*```mermaid\s*(.*?)\s*```\s*</diagram>", content, re.DOTALL | re.IGNORECASE)
+            if not diagram_match:
+                # Fallback to any content inside <diagram>
+                diagram_match = re.search(r"<diagram>\s*(.*?)\s*</diagram>", content, re.DOTALL | re.IGNORECASE)
+            
+            if diagram_match:
+                diagram_content = diagram_match.group(1).strip()
+                if diagram_content.startswith("```mermaid"):
+                    diagram_content = diagram_content[10:].strip()
+                if diagram_content.endswith("```"):
+                    diagram_content = diagram_content[:-3].strip()
+
+                diagram_path = os.path.join(target_dir, "diagram.mermaid")
+                with open(diagram_path, "w", encoding="utf-8") as f:
+                    f.write(diagram_content)
+                generated_artifacts["diagram_path"] = diagram_path
+
+            # 2. Parse ADRs
+            adr_matches = re.finditer(r"<adr\s+id=\"([^\"]+)\">\s*(.*?)\s*</adr>", content, re.DOTALL | re.IGNORECASE)
+            adrs = {}
+            for match in adr_matches:
+                adr_orig_id = match.group(1).strip()
+                adr_body = match.group(2).strip()
+                
+                adr_id = sanitize_path_component(adr_orig_id)
+                adr_file_name = f"{adr_id}.md"
+                adr_path = os.path.join(target_dir, adr_file_name)
+                with open(adr_path, "w", encoding="utf-8") as f:
+                    f.write(adr_body)
+                
+                adrs[adr_orig_id] = adr_path
+
+            if adrs:
+                generated_artifacts["adrs"] = adrs
+
+            response.artifacts = generated_artifacts
+            # Create ArchitectureResult model and emit as JSON
+            architecture_result = ArchitectureResult(
+                role="architect",
+                status="completed",
+                architecture={
+                    "diagram": generated_artifacts.get("diagram_path"),
+                    "adrs": [
+                        {
+                            "id": adr_id,
+                            "title": "",
+                            "decision": "",
+                            "rationale": ""
+                        } for adr_id in generated_artifacts.get("adrs", {}).keys()
+                    ],
+                },
+                warnings=[],
+                recommendations=[],
+            )
+            response.output_text = architecture_result.json()
+
+
+        return response

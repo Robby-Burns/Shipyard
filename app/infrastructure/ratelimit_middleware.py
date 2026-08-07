@@ -33,12 +33,22 @@ class InMemoryRateLimitStore(RateLimitStore):
         self._cache = TTLCache(maxsize=10_000, ttl=60)
         # Daily spend cap tracking: cumulative request tokens consumed (24h TTL)
         self._spend = TTLCache(maxsize=10_000, ttl=86400)
-        self._lock = asyncio.Lock()
+        self._key_locks = TTLCache(maxsize=10_000, ttl=300)  # per-key asyncio.Lock with TTL
+
+    # Helper to get lock for a specific key
+    async def _get_lock(self, key: str) -> asyncio.Lock:
+        lock = self._key_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._key_locks[key] = lock
+        return lock
 
     async def check_and_consume(
         self, key: str, limit: int, cap: Optional[int]
     ) -> Tuple[bool, str]:
-        async with self._lock:
+        # Acquire per-key lock for atomic check/consume
+        lock = await self._get_lock(key)
+        async with lock:
             now = time.time()
 
             # 1. Rate Limiting Check (Token Bucket)
@@ -89,8 +99,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next):
-        # Bypass admin or internal routes
-        if request.url.path.startswith("/admin"):
+        # Bypass admin or internal routes only for exact /admin path or its subpaths, not for similarly prefixed paths
+        path = request.url.path
+        # Exact match or subpath under /admin/
+        if path == "/admin" or path.startswith("/admin/"):
             return await call_next(request)
 
         # Derive rate-limiting key
