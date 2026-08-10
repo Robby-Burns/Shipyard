@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
+from app.config.settings import settings
 from app.database.session import get_db
 from app.main import app
 
@@ -13,7 +14,7 @@ def test_root():
     assert response.status_code == 200
     assert response.json() == {
         "message": "Shipyard Platform Operational",
-        "env": "development",
+        "env": settings.app_env,
     }
 
 
