@@ -1,5 +1,5 @@
 import importlib.util
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,19 +14,20 @@ class Settings(BaseSettings):
     # Auth settings
     jwt_secret_key: str = "change-me-in-production-super-secret-key"
 
-    @field_validator("jwt_secret_key", mode="after")
-    @classmethod
-    def validate_jwt_secret(cls, v: str) -> str:
+    @model_validator(mode="after")
+    def validate_jwt_secret(self) -> "Settings":
         """Validate JWT secret strength in production.
 
-        Disallow the default placeholder and enforce a minimum length.
+        * Uses the **instance** value `self.app_env` (Pydantic Settings v2 semantics).
+        * Disallows the placeholder and enforces a minimum length of 32 characters.
         """
-        if getattr(cls, "app_env", "development") == "production":
+        if getattr(self, "app_env", "development") == "production":
+            v = self.jwt_secret_key
             if not v or v == "change-me-in-production-super-secret-key" or len(v) < 32:
                 raise ValueError(
                     "In production, jwt_secret_key must be a non‑default secret of sufficient length."
                 )
-        return v
+        return self
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
 

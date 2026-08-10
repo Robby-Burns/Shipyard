@@ -119,6 +119,8 @@ function switchTab(tabName) {
         loadPassportsDirectory();
     } else if (tabName === "knowledge") {
         initKnowledgeBoard();
+    } else if (tabName === "infrastructure") {
+        loadInfrastructure();
     }
 }
 
@@ -1678,5 +1680,140 @@ async function rejectKnowledgeCandidate(itemId) {
         }
     } catch (e) {
         console.error(e);
+    }
+}
+
+// Load Infrastructure Transparency Panel
+async function loadInfrastructure() {
+    const container = document.getElementById("infrastructure-grid-container");
+    if (!container) return;
+    
+    container.innerHTML = `
+        <div style="grid-column: 1/-1; text-align: center; padding: 3rem; color: hsl(var(--text-muted));">
+            <i class="fa-solid fa-circle-notch fa-spin" style="font-size: 2rem; margin-bottom: 1rem; display: block; margin-left: auto; margin-right: auto; width: fit-content;"></i>
+            Checking adapter connections...
+        </div>
+    `;
+
+    try {
+        const res = await fetch(`${API_BASE}/api/v1/infrastructure`, {
+            method: "GET",
+            headers: getHeaders()
+        });
+
+        if (!res.ok) {
+            throw new Error(`HTTP error! status: ${res.status}`);
+        }
+
+        const data = await res.json();
+        container.innerHTML = "";
+
+        // FontAwesome Icons mapping for components
+        const iconMap = {
+            "Models": "fa-brain",
+            "Repository": "fa-code-branch",
+            "Deployment": "fa-cloud-arrow-up",
+            "Memory": "fa-database",
+            "Storage": "fa-hard-drive"
+        };
+
+        data.components.forEach(comp => {
+            const card = document.createElement("div");
+            card.className = "infra-card";
+
+            const iconClass = iconMap[comp.name] || "fa-server";
+            const badgeClass = comp.health ? "operational" : "degraded";
+            const badgeIcon = comp.health ? "fa-circle-check" : "fa-triangle-exclamation";
+            const badgeText = comp.health ? "Healthy" : "Degraded";
+
+            let propertiesHtml = "";
+            let detailsHtml = "";
+
+            // Generic properties
+            propertiesHtml = `
+                <div class="infra-property-item">
+                    <span class="infra-property-label">Configured Provider</span>
+                    <span class="infra-property-value">${comp.provider}</span>
+                </div>
+                <div class="infra-property-item">
+                    <span class="infra-property-label">Active Adapter</span>
+                    <span class="infra-property-value">${comp.adapter}</span>
+                </div>
+                <div class="infra-property-item">
+                    <span class="infra-property-label">Operational Status</span>
+                    <span class="infra-property-value">${comp.status}</span>
+                </div>
+            `;
+
+            // Dynamic detail subsections
+            if (comp.name === "Models" && comp.details["Capabilities & Routing"]) {
+                detailsHtml = `
+                    <div class="infra-details-section">
+                        <div class="infra-details-title">Capability Routing</div>
+                        <div class="infra-mapping-list">
+                `;
+                for (const [capability, model] of Object.entries(comp.details["Capabilities & Routing"])) {
+                    detailsHtml += `
+                        <div class="infra-mapping-item">
+                            <span class="infra-mapping-key">${capability}</span>
+                            <span class="infra-mapping-val">${model}</span>
+                        </div>
+                    `;
+                }
+                detailsHtml += `
+                        </div>
+                    </div>
+                `;
+            } else if (comp.details) {
+                // Render general key-values from details object
+                detailsHtml = `
+                    <div class="infra-details-section">
+                        <div class="infra-details-title">Adapter Details</div>
+                        <div class="infra-mapping-list">
+                `;
+                for (const [key, value] of Object.entries(comp.details)) {
+                    if (key !== "Capabilities & Routing") {
+                        detailsHtml += `
+                            <div class="infra-mapping-item">
+                                <span class="infra-mapping-key">${key}</span>
+                                <span class="infra-mapping-val">${value}</span>
+                            </div>
+                        `;
+                    }
+                }
+                detailsHtml += `
+                        </div>
+                    </div>
+                `;
+            }
+
+            card.innerHTML = `
+                <div class="infra-card-header">
+                    <div class="infra-card-title">
+                        <i class="fa-solid ${iconClass} infra-card-icon"></i>
+                        <span>${comp.name}</span>
+                    </div>
+                    <span class="infra-badge ${badgeClass}">
+                        <i class="fa-solid ${badgeIcon}"></i>
+                        <span>${badgeText}</span>
+                    </span>
+                </div>
+                <div class="infra-property-list">
+                    ${propertiesHtml}
+                </div>
+                ${detailsHtml}
+            `;
+
+            container.appendChild(card);
+        });
+
+    } catch (e) {
+        console.error("Failed to load infrastructure details:", e);
+        container.innerHTML = `
+            <div style="grid-column: 1/-1; text-align: center; padding: 3rem; color: hsl(var(--status-red));">
+                <i class="fa-solid fa-triangle-exclamation" style="font-size: 2rem; margin-bottom: 1rem; display: block; margin-left: auto; margin-right: auto; width: fit-content;"></i>
+                Failed to retrieve infrastructure configuration. Ensure backend services are healthy.
+            </div>
+        `;
     }
 }

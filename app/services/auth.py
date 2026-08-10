@@ -24,6 +24,7 @@ async def get_current_user(
         payload = jwt.decode(
             token,
             settings.jwt_secret_key,
+            options={"require": ["exp"]},
             algorithms=[settings.jwt_algorithm],
         )
         return payload

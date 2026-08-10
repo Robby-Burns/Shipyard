@@ -82,20 +82,16 @@ async def get_infrastructure_status(
     if "sqlite" in settings.database_url:
         db_type = "SQLite"
     
-    # Simple check: database url existence indicates config
-    db_health = True
-    
-    # Sanitize database URL for display
-    sanitized_db = settings.database_url
-    if "@" in sanitized_db:
-        # Obscure password
-        parts = sanitized_db.split("@")
-        prefix = parts[0]
-        if ":" in prefix:
-            subparts = prefix.split(":")
-            # Keep protocol and user name, hide password
-            sanitized_db = f"{subparts[0]}://{subparts[1].replace('//', '')}:***@{parts[1]}"
-    
+    # Simple check: database connectivity using async engine
+    from app.database.session import engine
+    from sqlalchemy import text
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("SELECT 1"))
+        db_health = True
+    except Exception:
+        db_health = False
+
     components.append(
         InfrastructureComponent(
             name="Memory",
@@ -105,7 +101,6 @@ async def get_infrastructure_status(
             health=db_health,
             details={
                 "Database Engine": db_type,
-                "Connection URL": sanitized_db,
                 "Private Memory Retention": f"{settings.private_memory_retention_days} days",
                 "Proposed Knowledge Retention": f"{settings.proposed_candidate_retention_days} days",
             },

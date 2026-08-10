@@ -55,6 +55,10 @@
                     <span>Shared Knowledge</span>
                     <span class="badge" id="active-candidates-badge" style="display: none;">0</span>
                 </button>
+                <button class="nav-btn" data-tab="infrastructure">
+                    <i class="fa-solid fa-server nav-icon"></i>
+                    <span>Infrastructure</span>
+                </button>
             </nav>
 
             <div class="sidebar-footer">
@@ -239,6 +243,19 @@
                             <p>Select a proposed knowledge candidate to approve it for team-wide use or browse curated coding standards and playbooks.</p>
                         </div>
                     </div>
+                </div>
+            </section>
+
+            <!-- Tab 6: Infrastructure Status -->
+            <section class="tab-panel" id="infrastructure-panel">
+                <div class="panel-header">
+                    <div>
+                        <h1>Infrastructure Status</h1>
+                        <p class="panel-subtitle">Observe replaceable adapter configurations and health metrics under the Infrastructure Adapter Pattern.</p>
+                    </div>
+                </div>
+                <div class="infrastructure-grid" id="infrastructure-grid-container">
+                    <!-- Dynamic infrastructure cards will be injected here -->
                 </div>
             </section>
         </main>
