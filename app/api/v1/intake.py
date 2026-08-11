@@ -102,15 +102,24 @@ async def upload_intake_file(
     try:
         file_bytes = await file.read()
         from app.utils.file_parser import extract_text_from_file
-        extracted_text = extract_text_from_file(file.filename, file_bytes)
+        result = await extract_text_from_file(file.filename, file_bytes)
         
-        if not extracted_text.strip():
+        if result.method == "failed":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Failed to extract text from file: {result.error_detail}"
+            )
+            
+        if not result.text.strip():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, 
                 detail="The uploaded file contains no extractable text."
             )
             
-        formatted_message = f"[Uploaded File: {file.filename}]\n\n{extracted_text}"
+        if result.method == "ocr":
+            formatted_message = f"[Uploaded File: {file.filename} (OCR Extracted)]\n\n{result.text}"
+        else:
+            formatted_message = f"[Uploaded File: {file.filename}]\n\n{result.text}"
         
         return await service.send_chat_message(
             session_id,
