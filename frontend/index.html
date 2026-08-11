@@ -100,6 +100,10 @@
                         </div>
                         <div class="chat-input-area">
                             <div class="textarea-wrapper">
+                                <button id="upload-file-btn" class="btn-upload" title="Upload Document (PDF/Text)">
+                                    <i class="fa-solid fa-paperclip"></i>
+                                </button>
+                                <input type="file" id="file-input" accept=".pdf,.txt,.md,.json,.yaml,.yml" style="display: none;" />
                                 <textarea id="chat-input" placeholder="Describe your product requirements, stack constraints, or paste documentation..." rows="1"></textarea>
                                 <button id="send-chat-btn" class="btn-send" title="Send Request">
                                     <i class="fa-solid fa-arrow-up"></i>

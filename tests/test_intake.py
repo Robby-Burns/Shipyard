@@ -138,6 +138,22 @@ def test_intake_endpoints_full_flow(auth_headers, other_user_headers):
         assert data["messages"][1]["content"] == "I want to build a backend system with Postgres"
         assert "Mock Response" in data["messages"][2]["content"]
 
+        # 6. Upload Text File (Owner)
+        from io import BytesIO
+        file_content = b"This is a test spec file content."
+        file_obj = BytesIO(file_content)
+        res = client.post(
+            f"/api/v1/intake/{session_id}/upload",
+            headers=auth_headers,
+            files={"file": ("test_spec.txt", file_obj, "text/plain")},
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert len(data["messages"]) == 5  # previous 3 + user upload + assistant reply
+        assert "[Uploaded File: test_spec.txt]" in data["messages"][3]["content"]
+        assert "This is a test spec file content." in data["messages"][3]["content"]
+        assert "Mock Response" in data["messages"][4]["content"]
+
     finally:
         app.dependency_overrides.clear()
         if os.path.exists("artifacts/specifications"):

@@ -1,7 +1,7 @@
 from typing import List
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status, File, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.session import get_db
@@ -78,3 +78,45 @@ async def send_chat_message(
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.post("/{session_id}/upload", response_model=IntakeSessionResponse)
+async def upload_intake_file(
+    session_id: uuid.UUID,
+    request: Request,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    service = IntakeService(db)
+    session = await service.get_session(session_id)
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Intake session not found"
+        )
+    if session.owner_id != user.get("sub"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden"
+        )
+    
+    try:
+        file_bytes = await file.read()
+        from app.utils.file_parser import extract_text_from_file
+        extracted_text = extract_text_from_file(file.filename, file_bytes)
+        
+        if not extracted_text.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, 
+                detail="The uploaded file contains no extractable text."
+            )
+            
+        formatted_message = f"[Uploaded File: {file.filename}]\n\n{extracted_text}"
+        
+        return await service.send_chat_message(
+            session_id,
+            formatted_message,
+            request_id=getattr(request.state, "request_id", None),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+

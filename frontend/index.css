@@ -503,6 +503,26 @@ h1 {
     overflow-y: auto;
 }
 
+.btn-upload {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background-color: transparent;
+    color: hsl(var(--text-muted));
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.2s, color 0.2s, background-color 0.2s;
+    margin-right: 0.5rem;
+}
+
+.btn-upload:hover {
+    color: hsl(var(--primary));
+    background-color: rgba(255,255,255,0.05);
+}
+
 .btn-send {
     width: 32px;
     height: 32px;

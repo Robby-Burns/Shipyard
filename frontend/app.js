@@ -143,6 +143,17 @@ function setupInputHandlers() {
 
     sendBtn.addEventListener("click", sendChatMessage);
 
+    // File upload handlers
+    const uploadBtn = document.getElementById("upload-file-btn");
+    const fileInput = document.getElementById("file-input");
+    
+    if (uploadBtn && fileInput) {
+        uploadBtn.addEventListener("click", () => {
+            fileInput.click();
+        });
+        fileInput.addEventListener("change", handleFileUpload);
+    }
+
     // Setup promote button from Intake to Workflow
     document.getElementById("start-project-btn").addEventListener("click", promoteIntakeToProject);
 
@@ -291,6 +302,52 @@ async function sendChatMessage() {
         removeTypingIndicator();
         console.error(e);
         appendMessage("assistant", "Connection to Intake Service lost. Please verify network status.");
+    }
+}
+
+async function handleFileUpload() {
+    const fileInput = document.getElementById("file-input");
+    if (!fileInput) return;
+    const file = fileInput.files[0];
+    if (!file || !state.activeIntakeSession) return;
+
+    const fileName = file.name;
+    
+    // UI Feedback: Show typing indicator immediately while uploading & parsing
+    showTypingIndicator();
+    appendMessage("user", `[Uploading File: ${fileName}]`);
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const headers = {};
+    if (CURRENT_TOKEN) {
+        headers["Authorization"] = `Bearer ${CURRENT_TOKEN}`;
+    }
+
+    try {
+        const res = await fetch(`${API_BASE}/api/v1/intake/${state.activeIntakeSession.id}/upload`, {
+            method: "POST",
+            headers: headers,
+            body: formData
+        });
+
+        removeTypingIndicator();
+        fileInput.value = ""; // Reset file input
+
+        if (res.ok) {
+            const data = await res.json();
+            state.activeIntakeSession = data;
+            renderIntakeSession();
+        } else {
+            const errData = await res.json();
+            appendMessage("assistant", `Upload failed: ${errData.detail || "Unable to parse file."}`);
+        }
+    } catch (e) {
+        removeTypingIndicator();
+        fileInput.value = ""; // Reset file input
+        console.error(e);
+        appendMessage("assistant", "Connection to Intake Service lost during file upload.");
     }
 }
 

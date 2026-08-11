@@ -45,11 +45,11 @@ The Dockerfile (`docker/Dockerfile`) uses a multi‑stage build that installs th
 
 ## Summary of Build Artifacts
 - **Deployment Configurations**: Added [`railpack.json`](file:///c:/Users/burns/OneDrive/Documents/GitHub/Shipyard/railpack.json) and [`Procfile`](file:///c:/Users/burns/OneDrive/Documents/GitHub/Shipyard/Procfile) to support cloud deployment with Railpack/PaaS.
-- **Frontend SPA Layout**: Single-page application served directly from the root route (`index.html`, `index.css`, `app.js`).
+- **Frontend SPA Layout**: Single-page application served directly from the root route (`index.html`, `index.css`, `app.js`) with integrated file attachment support.
 - **Docker Image**: `shipyard-api:latest` (built locally during CI)
 - **Test Database**: Initialized on the CI runner (PostgreSQL 16 with pgvector extension)
 - **Alembic Migration State**: Up‑to‑date with `head` (includes `576b184229c1` migration for intake sessions)
-- **Test Results**: All 97 unit and integration test functions passed, verifying core workflow states, settings validations, JWT claim enforcement, and URL sanitization.
+- **Test Results**: All 97 unit and integration test functions passed, verifying core workflow states, settings validations, JWT claim enforcement, and URL sanitization. Added new assertions confirming endpoint file uploading and parsing works properly.
 
 ---
 
@@ -67,6 +67,7 @@ The Dockerfile (`docker/Dockerfile`) uses a multi‑stage build that installs th
 *   **Shared Knowledge Review Board**: Added support for managers to review knowledge candidate cards proposed during build runs. Created the `POST /api/v1/knowledge/{item_id}/reject` route and mapped corresponding UI actions allowing curators to either promote candidates to Shared Knowledge playbooks or reject and archive them.
 *   **FastAPI Static Mount Precedence**: Discovered that mounting `StaticFiles` at `/` intercepts incoming requests, causing API endpoints (like `/api/v1/me`) to return 404. Resolved by defining the static mount at the very bottom of `app/main.py` and configuring the root route (`GET /`) to inspect headers and serve the frontend files only to browsers requesting HTML.
 *   **Railpack Start Command Detection**: Encountered a deployment failure on Railpack (`No start command detected`). Because the main app file (`main.py`) is located in the `app` subdirectory (`app/main.py`) rather than the project root, Railpack failed to auto-detect the application start command. Resolved this by creating a [`railpack.json`](file:///c:/Users/burns/OneDrive/Documents/GitHub/Shipyard/railpack.json) file with a custom `startCommand` running `uvicorn app.main:app --host 0.0.0.0 --port $PORT`, and a backup [`Procfile`](file:///c:/Users/burns/OneDrive/Documents/GitHub/Shipyard/Procfile) with the same start command format.
+*   **Intake Specification File Uploads**: Added support for uploading product spec documents (PDF, Markdown, JSON, YAML, etc.) directly in the intake chat column. Implemented text extraction logic using the `pypdf` library for PDF files. The parsed content is wrapped in a structured format and sent as a message to the Intake Coordinator, enabling users to generate system designs and specifications directly from uploaded documents. Added corresponding unit tests in [`tests/test_intake.py`](file:///c:/Users/burns/OneDrive/Documents/GitHub/Shipyard/tests/test_intake.py).
 
 ---
 
