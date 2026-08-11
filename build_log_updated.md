@@ -1,6 +1,6 @@
 # Build Log for Shipyard Project
 
-**Generated on:** 2026-08-11T11:48:00-07:00
+**Generated on:** 2026-08-11T16:27:00-07:00
 
 ---
 
@@ -49,7 +49,7 @@ The Dockerfile (`docker/Dockerfile`) uses a multi‑stage build that installs th
 - **Docker Image**: `shipyard-api:latest` (built locally during CI)
 - **Test Database**: Initialized on the CI runner (PostgreSQL 16 with pgvector extension)
 - **Alembic Migration State**: Up‑to‑date with `head` (includes `576b184229c1` migration for intake sessions)
-- **Test Results**: All 97 unit and integration test functions passed, verifying core workflow states, settings validations, JWT claim enforcement, and URL sanitization. Added new assertions confirming endpoint file uploading and parsing works properly.
+- **Test Results**: All 103 unit and integration test functions passed, verifying core workflow states, settings validations, JWT claim enforcement, URL sanitization, and scanned PDF OCR fallback logic.
 
 ---
 
@@ -68,6 +68,7 @@ The Dockerfile (`docker/Dockerfile`) uses a multi‑stage build that installs th
 *   **FastAPI Static Mount Precedence**: Discovered that mounting `StaticFiles` at `/` intercepts incoming requests, causing API endpoints (like `/api/v1/me`) to return 404. Resolved by defining the static mount at the very bottom of `app/main.py` and configuring the root route (`GET /`) to inspect headers and serve the frontend files only to browsers requesting HTML.
 *   **Railpack Start Command Detection**: Encountered a deployment failure on Railpack (`No start command detected`). Because the main app file (`main.py`) is located in the `app` subdirectory (`app/main.py`) rather than the project root, Railpack failed to auto-detect the application start command. Resolved this by creating a [`railpack.json`](file:///c:/Users/burns/OneDrive/Documents/GitHub/Shipyard/railpack.json) file with a custom `startCommand` running `alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT` (ensuring database migrations run automatically on container startup), and a backup [`Procfile`](file:///c:/Users/burns/OneDrive/Documents/GitHub/Shipyard/Procfile) with the same start command format.
 *   **Intake Specification File Uploads**: Added support for uploading product spec documents (PDF, Markdown, JSON, YAML, etc.) directly in the intake chat column. Implemented text extraction logic using the `pypdf` library for PDF files. The parsed content is wrapped in a structured format and sent as a message to the Intake Coordinator, enabling users to generate system designs and specifications directly from uploaded documents. Added corresponding unit tests in [`tests/test_intake.py`](file:///c:/Users/burns/OneDrive/Documents/GitHub/Shipyard/tests/test_intake.py).
+*   **Scanned PDF OCR Fallback Support**: Extended the intake file upload system to support scanned (image-only) PDF files. Developed a character-density heuristic (under 100 characters per page triggers OCR) that falls back to Poppler rendering and Tesseract extraction. Prevented event loop blocking by offloading OCR to a background thread pool via `asyncio.to_thread`. Added strict page limits (15 pages max), DPI constraints (150 DPI), and explicit timeouts to mitigate Denial of Service. Propagated a `(OCR Extracted)` tag to downstream LLM coordinator processes to alert them of text derivation source. Written a mocked and gated integration test suite verifying these features.
 
 ---
 
