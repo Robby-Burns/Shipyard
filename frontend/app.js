@@ -40,6 +40,23 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 // Setup Dev Auth automatically
 async function initAuth() {
+    if (CURRENT_TOKEN) {
+        // Validate the cached token by hitting the protected test route
+        try {
+            const res = await fetch(`${API_BASE}/api/v1/me`, {
+                method: "GET",
+                headers: getHeaders()
+            });
+            if (!res.ok) {
+                console.log("Cached dev token is invalid or expired. Clearing...");
+                localStorage.removeItem("shipyard_dev_token");
+                CURRENT_TOKEN = "";
+            }
+        } catch (e) {
+            console.error("Failed to validate cached token:", e);
+        }
+    }
+
     if (!CURRENT_TOKEN) {
         try {
             console.log("Requesting dev token...");
