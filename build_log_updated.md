@@ -1,6 +1,6 @@
 # Build Log for Shipyard Project
 
-**Generated on:** 2026-08-10T11:55:00-07:00
+**Generated on:** 2026-08-11T11:48:00-07:00
 
 ---
 
@@ -44,6 +44,7 @@ The Dockerfile (`docker/Dockerfile`) uses a multi‑stage build that installs th
 ---
 
 ## Summary of Build Artifacts
+- **Deployment Configurations**: Added [`railpack.json`](file:///c:/Users/burns/OneDrive/Documents/GitHub/Shipyard/railpack.json) and [`Procfile`](file:///c:/Users/burns/OneDrive/Documents/GitHub/Shipyard/Procfile) to support cloud deployment with Railpack/PaaS.
 - **Frontend SPA Layout**: Single-page application served directly from the root route (`index.html`, `index.css`, `app.js`).
 - **Docker Image**: `shipyard-api:latest` (built locally during CI)
 - **Test Database**: Initialized on the CI runner (PostgreSQL 16 with pgvector extension)
@@ -65,6 +66,7 @@ The Dockerfile (`docker/Dockerfile`) uses a multi‑stage build that installs th
     *   **Passports Directory**: A vault interface allowing managers to read and copy finalized compiled passports and guides.
 *   **Shared Knowledge Review Board**: Added support for managers to review knowledge candidate cards proposed during build runs. Created the `POST /api/v1/knowledge/{item_id}/reject` route and mapped corresponding UI actions allowing curators to either promote candidates to Shared Knowledge playbooks or reject and archive them.
 *   **FastAPI Static Mount Precedence**: Discovered that mounting `StaticFiles` at `/` intercepts incoming requests, causing API endpoints (like `/api/v1/me`) to return 404. Resolved by defining the static mount at the very bottom of `app/main.py` and configuring the root route (`GET /`) to inspect headers and serve the frontend files only to browsers requesting HTML.
+*   **Railpack Start Command Detection**: Encountered a deployment failure on Railpack (`No start command detected`). Because the main app file (`main.py`) is located in the `app` subdirectory (`app/main.py`) rather than the project root, Railpack failed to auto-detect the application start command. Resolved this by creating a [`railpack.json`](file:///c:/Users/burns/OneDrive/Documents/GitHub/Shipyard/railpack.json) file with a custom `startCommand` running `uvicorn app.main:app --host 0.0.0.0 --port $PORT`, and a backup [`Procfile`](file:///c:/Users/burns/OneDrive/Documents/GitHub/Shipyard/Procfile) with the same start command format.
 
 ---
 
