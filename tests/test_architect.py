@@ -56,6 +56,10 @@ async def test_architect_parsing_and_persistence(
 
     assert res.role == DisciplineRole.ARCHITECT
     assert res.status == "success"
+    assert "<diagram>" in res.output_text
+    assert "```mermaid" in res.output_text
+    assert '<adr id="ADR-001">' in res.output_text
+    assert res.artifacts["architecture_result"]["status"] == "completed"
 
     # Assert correct keys in artifacts dictionary
     assert "diagram_path" in res.artifacts

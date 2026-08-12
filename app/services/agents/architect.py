@@ -30,7 +30,9 @@ class ArchitectAgent(BaseAgent):
             "- Define component interactions and data flow diagrams (use Mermaid format)\n"
             "- Produce system design records following the standard ADR template\n"
             "- Translate product requirements into precise technical architecture blueprints.\n\n"
-            "Output Format: Return a single JSON object adhering to the ArchitectureResult schema. Include fields: 'role', 'status', 'architecture' (with 'diagram' path and list of ADRs), 'warnings', and 'recommendations'."
+            "Output Format: Return the architecture document as plain text. It MUST include a Mermaid diagram inside exactly "
+            "<diagram>```mermaid ... ```</diagram> and one or more ADRs inside "
+            "<adr id=\"ADR-...\"> ... </adr> tags. Do not return JSON; the verifier needs the tagged source document."
         )
 
     async def run(
@@ -94,7 +96,10 @@ class ArchitectAgent(BaseAgent):
                 generated_artifacts["adrs"] = adrs
 
             response.artifacts = generated_artifacts
-            # Create ArchitectureResult model and emit as JSON
+            # Build a structured summary for downstream consumers, but keep the
+            # original tagged document in output_text. The Challenger validates
+            # the tagged source; replacing it with JSON here makes valid output
+            # look incomplete and causes false escalations.
             architecture_result = ArchitectureResult(
                 role="architect",
                 status="completed",
@@ -112,7 +117,8 @@ class ArchitectAgent(BaseAgent):
                 warnings=[],
                 recommendations=[],
             )
-            response.output_text = architecture_result.json()
+            generated_artifacts["architecture_result"] = architecture_result.model_dump()
+            response.artifacts = generated_artifacts
 
 
         return response
