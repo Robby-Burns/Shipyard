@@ -70,19 +70,21 @@ class ChallengerAgent(BaseAgent):
         response = await self.run(req, request_id)
         if response.status == "success":
             content = response.output_text
-            match = re.search(r"<challenge\s+status=\"([^\"]+)\"(?:\s+reason=\"([^\"]+)\")?\s*>\s*</challenge>", content, re.DOTALL | re.IGNORECASE)
-            status = "passed"
-            reason = None
-            if match:
-                status = match.group(1).strip().lower()
-                reason = match.group(2).strip() if match.group(2) else None
-            else:
-                if "status=\"passed\"" in content.lower():
-                    status = "passed"
-                elif "status=\"failed\"" in content.lower():
+            from app.utils.tag_parser import parse_agent_decision
+            
+            result = parse_agent_decision(content, "challenge")
+            status = result.get("status")
+            reason = result.get("reason")
+            
+            if status:
+                status = status.lower()
+                if status not in ["passed", "failed"]:
                     status = "failed"
-                    reason_match = re.search(r"reason=\"([^\"]+)\"", content, re.IGNORECASE)
-                    reason = reason_match.group(1).strip() if reason_match else "Challenger failed verification but provided no details."
+                    reason = f"Invalid challenge status '{status}' returned by verifier."
+            else:
+                # Default to fail-closed on parsing failure
+                status = "failed"
+                reason = "Challenger verification tag/JSON was missing or malformed."
             
             response.artifacts = {
                 "challenge_status": status,

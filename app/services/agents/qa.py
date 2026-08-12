@@ -37,9 +37,18 @@ class QAAgent(BaseAgent):
         if response.status == "success":
             content = response.output_text
             
+            from app.utils.tag_parser import parse_agent_decision
+            from app.config.settings import settings
+
             # Parse QA Status
-            match = re.search(r"<qa_status>\s*(PASSED|FAILED)\s*</qa_status>", content, re.IGNORECASE)
-            status = match.group(1).strip().upper() if match else "PASSED"
+            result = parse_agent_decision(content, "qa_status")
+            status = result.get("status")
+            if status:
+                status = status.upper()
+            elif settings.openrouter_api_key != "mock-key":
+                raise ValueError("QA output was missing required structural <qa_status> tags or JSON fields.")
+            else:
+                status = "PASSED"
 
             response.artifacts = {
                 "qa_status": status,

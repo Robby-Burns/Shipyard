@@ -41,23 +41,20 @@ class ReviewerAgent(BaseAgent):
         if response.status == "success":
             content = response.output_text
             
+            from app.utils.tag_parser import parse_agent_decision
+            from app.config.settings import settings
+
             # Parse review status
-            # Check for approved or request_changes
-            match = re.search(r"<review\s+status=\"([^\"]+)\"(?:\s+reason=\"([^\"]+)\")?\s*>\s*</review>", content, re.DOTALL | re.IGNORECASE)
-            
-            status = "approved"
-            reason = None
-            if match:
-                status = match.group(1).strip().lower()
-                reason = match.group(2).strip() if match.group(2) else None
+            result = parse_agent_decision(content, "review")
+            status = result.get("status")
+            reason = result.get("reason")
+
+            if status:
+                status = status.lower()
+            elif settings.openrouter_api_key != "mock-key":
+                raise ValueError("Reviewer output was missing required structural <review> tags or JSON fields.")
             else:
-                # Fallback simple search if tag is open or not closed standardly
-                fallback_status = re.search(r"status=\"([^\"]+)\"", content, re.IGNORECASE)
-                if fallback_status:
-                    status = fallback_status.group(1).strip().lower()
-                fallback_reason = re.search(r"reason=\"([^\"]+)\"", content, re.IGNORECASE)
-                if fallback_reason:
-                    reason = fallback_reason.group(1).strip()
+                status = "approved"
 
             response.artifacts = {
                 "status": status,

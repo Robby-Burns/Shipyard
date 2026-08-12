@@ -54,46 +54,48 @@ class ArchitectAgent(BaseAgent):
 
             generated_artifacts = {}
 
-            # 1. Parse system diagram
-            diagram_match = re.search(r"<diagram>\s*```mermaid\s*(.*?)\s*```\s*</diagram>", content, re.DOTALL | re.IGNORECASE)
-            if not diagram_match:
-                # Fallback to any content inside <diagram>
-                diagram_match = re.search(r"<diagram>\s*(.*?)\s*</diagram>", content, re.DOTALL | re.IGNORECASE)
-            
+            from app.utils.tag_parser import extract_tags
+            from app.config.settings import settings
             import anyio
-            if diagram_match:
-                diagram_content = diagram_match.group(1).strip()
-                if diagram_content.startswith("```mermaid"):
-                    diagram_content = diagram_content[10:].strip()
-                if diagram_content.endswith("```"):
-                    diagram_content = diagram_content[:-3].strip()
 
+            # 1. Parse system diagram
+            diagrams = extract_tags(content, "diagram")
+            if diagrams:
+                diagram_content = diagrams[0]["content"]
                 diagram_path = os.path.join(target_dir, "diagram.mermaid")
                 await anyio.Path(diagram_path).write_text(diagram_content, encoding="utf-8")
                 generated_artifacts["diagram_path"] = diagram_path
             else:
-                # Fallback for development/testing if LLM doesn't output diagram tags
-                diagram_content = "graph TD;\n  A-->B;"
-                diagram_path = os.path.join(target_dir, "diagram.mermaid")
-                await anyio.Path(diagram_path).write_text(diagram_content, encoding="utf-8")
-                generated_artifacts["diagram_path"] = diagram_path
+                if settings.openrouter_api_key == "mock-key":
+                    # Fallback for development/testing if LLM doesn't output diagram tags in mock mode
+                    diagram_content = "graph TD;\n  A-->B;"
+                    diagram_path = os.path.join(target_dir, "diagram.mermaid")
+                    await anyio.Path(diagram_path).write_text(diagram_content, encoding="utf-8")
+                    generated_artifacts["diagram_path"] = diagram_path
+                else:
+                    raise ValueError("Architect output was missing required structural <diagram> tags.")
 
             # 2. Parse ADRs
-            adr_matches = re.finditer(r"<adr\s+id=\"([^\"]+)\">\s*(.*?)\s*</adr>", content, re.DOTALL | re.IGNORECASE)
+            adr_list = extract_tags(content, "adr")
             adrs = {}
-            for match in adr_matches:
-                adr_orig_id = match.group(1).strip()
-                adr_body = match.group(2).strip()
+            for item in adr_list:
+                adr_orig_id = item["attributes"].get("id", "").strip()
+                if not adr_orig_id:
+                    # Try fallback to extract id from heading inside content if attribute missing
+                    header_match = re.search(r"^#\s+(ADR-\d+)", item["content"], re.MULTILINE)
+                    adr_orig_id = header_match.group(1).strip() if header_match else f"ADR-{hash(item['content']) % 1000:03d}"
                 
+                adr_body = item["content"]
                 adr_id = sanitize_path_component(adr_orig_id)
                 adr_file_name = f"{adr_id}.md"
                 adr_path = os.path.join(target_dir, adr_file_name)
                 await anyio.Path(adr_path).write_text(adr_body, encoding="utf-8")
-                
                 adrs[adr_orig_id] = adr_path
 
             if adrs:
                 generated_artifacts["adrs"] = adrs
+            elif settings.openrouter_api_key != "mock-key":
+                raise ValueError("Architect output was missing required structural <adr> tags.")
 
             response.artifacts = generated_artifacts
             # Build a structured summary for downstream consumers, but keep the

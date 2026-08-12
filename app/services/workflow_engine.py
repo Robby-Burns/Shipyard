@@ -368,6 +368,7 @@ class WorkflowEngineService:
                         "generated_code": generated_code,
                         "architecture_doc": architecture_doc,
                     },
+                    specification_ref=workflow_id,
                 ),
                 request_id=request_id,
             )
@@ -474,6 +475,7 @@ class WorkflowEngineService:
                         "generated_code": generated_code,
                         "code_review": code_review,
                     },
+                    specification_ref=workflow_id,
                 ),
                 request_id=request_id,
             )
@@ -561,6 +563,36 @@ class WorkflowEngineService:
 
                     # QA Passed -> Execute Platform Agent to gather metrics & log recommendations
                     platform_agent = PlatformAgent(self.db)
+                    # Retrieve activity logs for this request_id to calculate metrics
+                    logs = []
+                    if request_id:
+                        from app.schemas.activity_log import ActivityLogFilter
+                        logs = await self.activity_log.search(
+                            ActivityLogFilter(request_id=request_id, limit=100)
+                        )
+                    
+                    # Compute model usage metrics
+                    metrics = {
+                        "steps": [],
+                        "total_cost": 0.0,
+                        "total_latency_ms": 0.0,
+                    }
+                    for log in logs:
+                        if log.event_type == "model_route_completed" and log.payload:
+                            payload = log.payload
+                            step_latency = payload.get("latency_ms", 0.0)
+                            step_usage = payload.get("usage") or {}
+                            step_cost = step_usage.get("estimated_cost", 0.0)
+                            
+                            metrics["total_cost"] += float(step_cost)
+                            metrics["total_latency_ms"] += float(step_latency)
+                            metrics["steps"].append({
+                                "capability": payload.get("capability"),
+                                "model": payload.get("model"),
+                                "latency_ms": step_latency,
+                                "cost": step_cost,
+                            })
+
                     platform_res = await platform_agent.run(
                         AgentExecutionRequest(
                             role=platform_agent.role,
@@ -568,6 +600,7 @@ class WorkflowEngineService:
                             context={
                                 "workflow_id": str(workflow_id),
                                 "qa_report": exec_res.output_text,
+                                "pipeline_metrics": metrics,
                             }
                         ),
                         request_id=request_id
@@ -668,7 +701,11 @@ class WorkflowEngineService:
             return workflow
 
         # 2. Run the first step
-        workflow = await self.execute_step(workflow_id, request_id)
+        try:
+            workflow = await self.execute_step(workflow_id, request_id)
+        except Exception as e:
+            workflow = await self._handle_step_failure(workflow_id, e, request_id)
+            return workflow
 
         # 3. Execution loop with iteration cap to prevent runaway loops
         MAX_STEPS = 15
@@ -684,7 +721,11 @@ class WorkflowEngineService:
                 WorkflowStatus.TESTING,
             ]:
                 break
-            workflow = await self.execute_step(workflow_id, request_id)
+            try:
+                workflow = await self.execute_step(workflow_id, request_id)
+            except Exception as e:
+                workflow = await self._handle_step_failure(workflow_id, e, request_id)
+                break
             steps_executed += 1
         else:
             # Runaway loop detected
@@ -693,6 +734,35 @@ class WorkflowEngineService:
             workflow.error_message = f"Execution exceeded maximum safety loop of {MAX_STEPS} steps."
             await self.db.commit()
             
+        return workflow
+
+    async def _handle_step_failure(
+        self, workflow_id: uuid.UUID, exc: Exception, request_id: Optional[str] = None
+    ) -> WorkflowRun:
+        """Helper to cleanly transition workflow run status to FAILED on step crash/exception."""
+        logger.error(
+            "workflow_step_execution_failed",
+            workflow_id=str(workflow_id),
+            error=str(exc),
+        )
+        result = await self.db.execute(
+            select(WorkflowRun).where(WorkflowRun.id == workflow_id)
+        )
+        workflow = result.scalar_one_or_none()
+        if workflow:
+            workflow.status = WorkflowStatus.FAILED
+            workflow.error_message = f"Step execution failed: {str(exc)}"
+            await self.db.commit()
+            
+            await self.activity_log.record(
+                event_type="workflow_failed",
+                source="workflow_engine",
+                request_id=request_id,
+                payload={
+                    "workflow_id": str(workflow_id),
+                    "error": str(exc),
+                },
+            )
         return workflow
 
     async def escalate_workflow(

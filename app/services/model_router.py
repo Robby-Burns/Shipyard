@@ -117,60 +117,169 @@ class ModelRouterService:
                 if configured_url.endswith("/chat/completions")
                 else f"{configured_url}/chat/completions"
             )
-            try:
-                async with httpx.AsyncClient() as client:
-                    res = await client.post(
-                        completion_url,
-                        json=payload,
-                        headers=headers,
-                        timeout=30.0,
-                    )
+            import asyncio
+            response = None
+            last_exception = None
+            max_retries = 3
+            backoff_factor = 1.0
+            retry_codes = {429, 502, 503, 504}
 
-                    if res.is_error:
+            try:
+                # 1. OpenRouter execution with transient retry loop
+                for attempt in range(max_retries + 1):
+                    try:
+                        async with httpx.AsyncClient() as client:
+                            res = await client.post(
+                                completion_url,
+                                json=payload,
+                                headers=headers,
+                                timeout=30.0,
+                            )
+                        
+                        if res.status_code == 200:
+                            data = res.json()
+                            if not isinstance(data, dict):
+                                raise OpenRouterUpstreamError(
+                                    status_code=502,
+                                    message="OpenRouter returned an invalid completion payload.",
+                                    error_type="provider_unavailable",
+                                )
+                            embedded_error = self._parse_embedded_error(data)
+                            if embedded_error:
+                                raise embedded_error
+                            
+                            choices = data.get("choices") or []
+                            if not choices or not isinstance(choices[0], dict):
+                                raise OpenRouterUpstreamError(
+                                    status_code=502,
+                                    message="OpenRouter returned no completion choices.",
+                                    error_type="provider_unavailable",
+                                )
+                            choice = choices[0]
+                            message_obj = choice.get("message") or {}
+                            content = message_obj.get("content")
+                            if not isinstance(content, str):
+                                raise OpenRouterUpstreamError(
+                                    status_code=502,
+                                    message="OpenRouter returned a completion without text content.",
+                                    error_type="provider_unavailable",
+                                )
+                            usage = dict(data.get("usage") or {})
+                            usage["finish_reason"] = choice.get("finish_reason")
+                            if data.get("provider"):
+                                usage["provider"] = data["provider"]
+                            if data.get("openrouter_metadata"):
+                                usage["openrouter_metadata"] = data["openrouter_metadata"]
+                            response_model = data.get("model") or model_name
+
+                            response = ModelRouteResponse(
+                                id=data.get("id", "completion-id"),
+                                capability=request.capability,
+                                model_used=response_model,
+                                content=content,
+                                usage=usage,
+                            )
+                            break  # Success!
+
+                        # Not 200 status code
+                        if res.status_code in retry_codes and attempt < max_retries:
+                            retry_after = res.headers.get("Retry-After")
+                            sleep_time = int(retry_after) if retry_after and retry_after.isdigit() else (backoff_factor * (2 ** attempt))
+                            await asyncio.sleep(sleep_time)
+                            continue
+                        
                         raise self._parse_http_error(res)
 
-                    data = res.json()
-                    if not isinstance(data, dict):
-                        raise OpenRouterUpstreamError(
-                            status_code=502,
-                            message="OpenRouter returned an invalid completion payload.",
-                            error_type="provider_unavailable",
-                        )
-                    embedded_error = self._parse_embedded_error(data)
-                    if embedded_error:
-                        raise embedded_error
+                    except (httpx.TimeoutException, httpx.ConnectError, httpx.NetworkError) as exc:
+                        last_exception = exc
+                        if attempt < max_retries:
+                            await asyncio.sleep(backoff_factor * (2 ** attempt))
+                            continue
+                    except OpenRouterUpstreamError as exc:
+                        last_exception = exc
+                        if exc.status_code in retry_codes and attempt < max_retries:
+                            sleep_time = int(exc.retry_after) if exc.retry_after and exc.retry_after.isdigit() else (backoff_factor * (2 ** attempt))
+                            await asyncio.sleep(sleep_time)
+                            continue
+                        # Stop retrying on non-retryable upstream errors (e.g. 400 Bad Request)
+                        break
 
-                    choices = data.get("choices") or []
-                    if not choices or not isinstance(choices[0], dict):
-                        raise OpenRouterUpstreamError(
-                            status_code=502,
-                            message="OpenRouter returned no completion choices.",
-                            error_type="provider_unavailable",
+                # 2. Native Provider Bypass (Failover Circuit Breaker)
+                if response is None:
+                    # Determine native fallback options based on model name prefix
+                    bypass_url = None
+                    bypass_headers = None
+                    bypass_model = None
+                    
+                    if model_name.startswith("openai/") and settings.openai_api_key:
+                        bypass_url = "https://api.openai.com/v1/chat/completions"
+                        bypass_headers = {
+                            "Authorization": f"Bearer {settings.openai_api_key}",
+                            "Content-Type": "application/json",
+                        }
+                        bypass_model = model_name.replace("openai/", "", 1)
+                    elif model_name.startswith("google/") and settings.google_api_key:
+                        bypass_url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+                        bypass_headers = {
+                            "Authorization": f"Bearer {settings.google_api_key}",
+                            "Content-Type": "application/json",
+                        }
+                        bypass_model = model_name.replace("google/", "", 1)
+                    
+                    if bypass_url and bypass_headers and bypass_model:
+                        await self.activity_log_service.record(
+                            event_type="model_route_bypass_triggered",
+                            source="model_router",
+                            request_id=request_id,
+                            payload={
+                                "capability": request.capability.value,
+                                "original_model": model_name,
+                                "bypass_model": bypass_model,
+                                "url": bypass_url,
+                            },
                         )
-                    choice = choices[0]
-                    message = choice.get("message") or {}
-                    content = message.get("content")
-                    if not isinstance(content, str):
-                        raise OpenRouterUpstreamError(
-                            status_code=502,
-                            message="OpenRouter returned a completion without text content.",
-                            error_type="provider_unavailable",
+                        
+                        bypass_payload = self._build_upstream_payload(
+                            request, model_name, candidates, selected_candidate
                         )
-                    usage = dict(data.get("usage") or {})
-                    usage["finish_reason"] = choice.get("finish_reason")
-                    if data.get("provider"):
-                        usage["provider"] = data["provider"]
-                    if data.get("openrouter_metadata"):
-                        usage["openrouter_metadata"] = data["openrouter_metadata"]
-                    response_model = data.get("model") or model_name
+                        bypass_payload["model"] = bypass_model
+                        bypass_payload.pop("provider", None)
+                        
+                        try:
+                            async with httpx.AsyncClient() as client:
+                                res = await client.post(
+                                    bypass_url,
+                                    json=bypass_payload,
+                                    headers=bypass_headers,
+                                    timeout=30.0,
+                                )
+                            if res.is_error:
+                                raise self._parse_http_error(res)
+                            
+                            data = res.json()
+                            choices = data.get("choices") or []
+                            if choices and isinstance(choices[0], dict):
+                                choice = choices[0]
+                                msg = choice.get("message") or {}
+                                content = msg.get("content")
+                                if isinstance(content, str):
+                                    usage = dict(data.get("usage") or {})
+                                    usage["finish_reason"] = choice.get("finish_reason")
+                                    usage["native_bypass"] = True
+                                    response = ModelRouteResponse(
+                                        id=data.get("id", "completion-id"),
+                                        capability=request.capability,
+                                        model_used=f"native/{bypass_model}",
+                                        content=content,
+                                        usage=usage,
+                                    )
+                        except Exception as bypass_exc:
+                            logger.error("model_route_bypass_failed", model=model_name, error=str(bypass_exc))
 
-                    response = ModelRouteResponse(
-                        id=data.get("id", "completion-id"),
-                        capability=request.capability,
-                        model_used=response_model,
-                        content=content,
-                        usage=usage,
-                    )
+                # 3. If still no response, raise the last exception
+                if response is None:
+                    raise last_exception or httpx.NetworkError("Failed to reach OpenRouter and bypass providers")
+
             except httpx.TimeoutException as exc:
                 await self._record_outcome(
                     request,
@@ -353,6 +462,38 @@ class ModelRouterService:
             payload["models"] = model_ids
         else:
             payload["model"] = model_name
+
+        # Check if structured output is requested and supported by candidate model
+        use_structured_json = False
+        if request.capability in {Capability.CODE_REVIEW, Capability.TESTING, Capability.CHALLENGE}:
+            if any(m in settings.structured_output_models for m in [model_name] + model_ids):
+                use_structured_json = True
+
+        if use_structured_json:
+            payload["response_format"] = {"type": "json_object"}
+            messages_copy = [message.model_dump() for message in request.messages]
+            schema_inst = ""
+            if request.capability == Capability.CODE_REVIEW:
+                schema_inst = (
+                    "\n\nYou MUST return a JSON object with the following schema:\n"
+                    '{\n  "status": "approved" | "request_changes",\n  "reason": "detailed reason for rejection, or null if approved"\n}'
+                )
+            elif request.capability == Capability.TESTING:
+                schema_inst = (
+                    "\n\nYou MUST return a JSON object with the following schema:\n"
+                    '{\n  "status": "PASSED" | "FAILED"\n}'
+                )
+            elif request.capability == Capability.CHALLENGE:
+                schema_inst = (
+                    "\n\nYou MUST return a JSON object with the following schema:\n"
+                    '{\n  "status": "passed" | "failed",\n  "reason": "detailed failure reason, or null if passed"\n}'
+                )
+                
+            if messages_copy and messages_copy[0]["role"] == "system":
+                messages_copy[0]["content"] += schema_inst
+            else:
+                messages_copy.insert(0, {"role": "system", "content": "You are a helpful assistant. Output JSON only." + schema_inst})
+            payload["messages"] = messages_copy
 
         # Older catalog records may not include supported_parameters. Preserve
         # the OpenAI-compatible defaults in that case.

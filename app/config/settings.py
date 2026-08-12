@@ -80,6 +80,18 @@ class Settings(BaseSettings):
     proposed_candidate_retention_days: int = 30
     rejected_candidate_retention_days: int = 14
 
+    # Structured outputs capability map
+    structured_output_models: list[str] = [
+        "openai/gpt-4o",
+        "google/gemini-2.5-pro",
+        "openai/gpt-4o-mini",
+        "google/gemini-2.5-flash",
+    ]
+
+    # Native direct API keys (for OpenRouter bypass failover)
+    openai_api_key: Optional[str] = None
+    google_api_key: Optional[str] = None
+
     # Git integration settings
     git_token: Optional[str] = None
 

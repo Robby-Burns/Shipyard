@@ -33,7 +33,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
           cache: "pip"
 
       - name: Install Dependencies
@@ -64,4 +64,4 @@ jobs:
 
       - name: Build Docker Image
         run: |
-          docker build -t shipyard-api:latest -f docker/Dockerfile .
+          docker build -t shipyard-api:latest -f Dockerfile .

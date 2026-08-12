@@ -73,38 +73,47 @@ async def get_workflow(
 
 logger = structlog.get_logger()
 
+# Global set to track actively running pipelines and prevent duplicate executions
+active_runs = set()
+
 
 async def background_run_pipeline(
     workflow_id: uuid.UUID, request_id: Optional[str] = None
 ):
-    async with AsyncSessionLocal() as db:
-        service = WorkflowEngineService(db)
-        try:
+    if workflow_id in active_runs:
+        return
+    active_runs.add(workflow_id)
+    try:
+        async with AsyncSessionLocal() as db:
+            service = WorkflowEngineService(db)
             await service.run_full_pipeline(workflow_id, request_id=request_id)
-        except Exception as e:
-            logger.error(
-                "background_pipeline_execution_failed",
-                workflow_id=str(workflow_id),
-                error=str(e),
-            )
-            # Update workflow status to FAILED in the DB so client/frontend stops polling
-            try:
+    except Exception as e:
+        logger.error(
+            "background_pipeline_execution_failed",
+            workflow_id=str(workflow_id),
+            error=str(e),
+        )
+        # Update workflow status to FAILED in the DB so client/frontend stops polling
+        try:
+            async with AsyncSessionLocal() as db_fail:
                 from sqlalchemy import select
                 from app.database.models.workflow import WorkflowRun
-                result = await db.execute(
+                result = await db_fail.execute(
                     select(WorkflowRun).where(WorkflowRun.id == workflow_id)
                 )
                 workflow = result.scalar_one_or_none()
                 if workflow:
                     workflow.status = WorkflowStatus.FAILED
                     workflow.error_message = str(e)
-                    await db.commit()
-            except Exception as db_err:
-                logger.error(
-                    "failed_to_mark_workflow_as_failed_in_db",
-                    workflow_id=str(workflow_id),
-                    error=str(db_err),
-                )
+                    await db_fail.commit()
+        except Exception as db_err:
+            logger.error(
+                "failed_to_mark_workflow_as_failed_in_db",
+                workflow_id=str(workflow_id),
+                error=str(db_err),
+            )
+    finally:
+        active_runs.discard(workflow_id)
 
 
 @router.post("/{workflow_id}/run", response_model=WorkflowRunResponse)
@@ -119,6 +128,13 @@ async def run_full_pipeline(
     from sqlalchemy import select
     from app.database.models.workflow import WorkflowRun
     service = WorkflowEngineService(db)
+    
+    # 1. Concurrency Check: If already actively running in this process, reject immediately
+    if workflow_id in active_runs:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Workflow run is already active."
+        )
     
     # Use SELECT ... FOR UPDATE to lock the row and prevent concurrent double-triggers
     result = await db.execute(
@@ -174,6 +190,7 @@ async def run_full_pipeline(
     # In testing environment, run synchronously to utilize the overridden in-memory SQLite database
     is_testing = (settings.app_env == "testing")
     if is_testing:
+        active_runs.add(workflow_id)
         try:
             await db.commit()
             return await service.run_full_pipeline(
@@ -183,9 +200,19 @@ async def run_full_pipeline(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)
             )
+        finally:
+            active_runs.discard(workflow_id)
+
+    # Synchronously transition status from CREATED to PLANNING on initial run to prevent race conditions
+    if wf.status == WorkflowStatus.CREATED:
+        wf.status = WorkflowStatus.PLANNING
+        wf.current_step = "coordinator_planning"
+        await db.commit()
+    else:
+        # Commit the transaction so row lock is released before enqueuing task
+        await db.commit()
 
     # Queue the workflow run in a background task for development/production to prevent proxy timeouts
-    await db.commit()
     background_tasks.add_task(
         background_run_pipeline, workflow_id, request_id
     )

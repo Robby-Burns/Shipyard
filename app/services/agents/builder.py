@@ -41,17 +41,23 @@ class BuilderAgent(BaseAgent):
         if response.status == "success":
             content = response.output_text
             
+            from app.utils.tag_parser import extract_tags
+            from app.config.settings import settings
+
             # 1. Parse generated files
-            file_matches = re.finditer(r"<file\s+path=\"([^\"]+)\">\s*(.*?)\s*</file>", content, re.DOTALL | re.IGNORECASE)
+            file_list = extract_tags(content, "file")
             files = {}
-            for match in file_matches:
-                file_path = match.group(1).strip()
-                file_body = match.group(2).strip()
-                files[file_path] = file_body
+            for item in file_list:
+                file_path = item["attributes"].get("path", "").strip()
+                if file_path:
+                    files[file_path] = item["content"]
 
             # 2. Parse test results
-            test_match = re.search(r"<test_results>\s*(.*?)\s*</test_results>", content, re.DOTALL | re.IGNORECASE)
-            test_results = test_match.group(1).strip() if test_match else "All unit tests executed and passed (mock verification)."
+            test_list = extract_tags(content, "test_results")
+            test_results = test_list[0]["content"] if test_list else "All unit tests executed and passed (mock verification)."
+
+            if not files and settings.openrouter_api_key != "mock-key":
+                raise ValueError("Builder output was missing required structural <file> tags.")
 
             # 3. Commit code using Repository Adapter
             repo_adapter = get_repository_adapter()
