@@ -356,9 +356,11 @@ class ModelRouterService:
         eligible = [
             candidate
             for candidate in eligible
-            if not candidate.get("supported_parameters")
-            or "max_tokens" in candidate["supported_parameters"]
+            if candidate.get("supported_parameters")
+            and (
+                "max_tokens" in candidate["supported_parameters"]
             or "max_completion_tokens" in candidate["supported_parameters"]
+            )
         ]
         eligible = [
             candidate

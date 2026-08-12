@@ -68,7 +68,11 @@ class ModelCatalogService:
             payload = response.json()
 
         models = [self._normalize_model(item) for item in payload.get("data", [])]
-        return [model for model in models if model.get("model_id")]
+        return [
+            model
+            for model in models
+            if model.get("model_id") and self._is_interactive_model(model)
+        ]
 
     async def _read_cached(
         self, now: datetime, include_expired: bool
@@ -80,7 +84,11 @@ class ModelCatalogService:
         if not include_expired:
             query = query.where(ModelCatalogSnapshot.expires_at > now)
         result = await self.db.execute(query)
-        return [self._snapshot_to_dict(row) for row in result.scalars().all()]
+        return [
+            self._snapshot_to_dict(row)
+            for row in result.scalars().all()
+            if self._is_interactive_model(self._snapshot_to_dict(row))
+        ]
 
     async def _save_catalog(self, models: List[Dict[str, Any]], fetched_at: datetime) -> None:
         await self.db.execute(
@@ -147,6 +155,26 @@ class ModelCatalogService:
             "benchmarks": row.benchmarks or {},
             "raw_metadata": row.raw_metadata or {},
         }
+
+    @staticmethod
+    def _is_interactive_model(model: Dict[str, Any]) -> bool:
+        """Exclude catalog entries that cannot serve chat completions."""
+        model_id = str(model.get("model_id") or "").lower()
+        if model_id.endswith(":batch") or model_id.endswith("/batch") or model_id.endswith("-batch"):
+            return False
+
+        raw = model.get("raw_metadata") or {}
+        searchable = " ".join(
+            str(raw.get(field) or "")
+            for field in ("id", "canonical_slug", "name", "description", "endpoint_type")
+        ).lower()
+        batch_markers = (
+            "batch api",
+            "batch-only",
+            "batch only",
+            "only available through batch",
+        )
+        return not any(marker in searchable for marker in batch_markers)
 
     @staticmethod
     def _emergency_candidates() -> List[Dict[str, Any]]:

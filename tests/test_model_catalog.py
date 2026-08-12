@@ -28,6 +28,21 @@ def test_catalog_api_root_handles_configured_endpoint():
     assert _api_root("https://openrouter.ai/api/v1/models") == "https://openrouter.ai/api/v1"
 
 
+def test_catalog_excludes_batch_only_models():
+    assert not ModelCatalogService._is_interactive_model(
+        {
+            "model_id": "provider/model:batch",
+            "raw_metadata": {},
+        }
+    )
+    assert not ModelCatalogService._is_interactive_model(
+        {
+            "model_id": "provider/model",
+            "raw_metadata": {"description": "Only available through the Batch API."},
+        }
+    )
+
+
 @pytest.mark.anyio
 async def test_catalog_uses_emergency_candidates_in_mock_mode(async_session, monkeypatch):
     monkeypatch.setattr(settings, "openrouter_api_key", "mock-key")
