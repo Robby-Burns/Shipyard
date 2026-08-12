@@ -16,7 +16,7 @@ from app.schemas.model_router import (
     ModelRouteRequest,
 )
 from app.services.activity_log import ActivityLogService
-from app.services.model_router import ModelRouterService
+from app.services.model_router import MODEL_ALIASES, ModelRouterService
 
 client = TestClient(app)
 
@@ -59,6 +59,10 @@ async def test_capability_resolution(async_session: AsyncSession):
         service.resolve_model(Capability.GENERAL_REASONING)
         == settings.default_model_general_reasoning
     )
+
+
+def test_retired_openrouter_model_alias_is_normalized():
+    assert MODEL_ALIASES["anthropic/claude-3.5-sonnet"] == "google/gemini-2.5-flash"
 
 
 @pytest.mark.anyio

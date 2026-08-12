@@ -15,6 +15,12 @@ from app.services.activity_log import ActivityLogService
 
 logger = structlog.get_logger()
 
+# OpenRouter retired this model ID. Keep this compatibility map so an old
+# Railway environment variable cannot reintroduce the 404 after deployment.
+MODEL_ALIASES = {
+    "anthropic/claude-3.5-sonnet": "google/gemini-2.5-flash",
+}
+
 
 class ModelRouterService:
 
@@ -31,16 +37,19 @@ class ModelRouterService:
             Capability.GENERAL_REASONING: settings.default_model_general_reasoning,
             Capability.CHALLENGE: settings.default_model_challenge,
         }
-        return capability_map.get(
+        model_name = capability_map.get(
             capability, settings.default_model_general_reasoning
         )
+        return MODEL_ALIASES.get(model_name, model_name)
 
     async def route(
         self, request: ModelRouteRequest, request_id: Optional[str] = None
     ) -> ModelRouteResponse:
         model_name = self.resolve_model(request.capability)
         if request.metadata and "model_override" in request.metadata:
-            model_name = request.metadata["model_override"]
+            model_name = MODEL_ALIASES.get(
+                request.metadata["model_override"], request.metadata["model_override"]
+            )
 
 
         # Log routing attempt

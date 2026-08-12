@@ -48,8 +48,8 @@ class Settings(BaseSettings):
     intake_spec_max_tokens: int = 3500
 
     # Capability mappings
-    default_model_architecture: str = "anthropic/claude-3.5-sonnet"
-    default_model_coding: str = "anthropic/claude-3.5-sonnet"
+    default_model_architecture: str = "google/gemini-2.5-flash"
+    default_model_coding: str = "google/gemini-2.5-flash"
     default_model_code_review: str = "openai/gpt-4o"
     default_model_testing: str = "openai/gpt-4o-mini"
     default_model_general_reasoning: str = "google/gemini-2.5-flash"
@@ -59,8 +59,8 @@ class Settings(BaseSettings):
     default_model_challenge_coordinator: str = "openai/gpt-4o-mini"
     default_model_challenge_architect: str = "openai/gpt-4o"
     default_model_challenge_builder: str = "google/gemini-2.5-flash"
-    default_model_challenge_reviewer: str = "anthropic/claude-3.5-sonnet"
-    default_model_challenge_qa: str = "anthropic/claude-3.5-sonnet"
+    default_model_challenge_reviewer: str = "google/gemini-2.5-flash"
+    default_model_challenge_qa: str = "google/gemini-2.5-flash"
     default_model_challenge_platform: str = "openai/gpt-4o-mini"
     # Memory retention periods (in days)
     private_memory_retention_days: int = 7
