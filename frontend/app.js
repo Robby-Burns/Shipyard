@@ -695,9 +695,14 @@ function renderProjectDetails(project) {
     container.innerHTML = `
         <!-- Header Info Bar -->
         <div class="project-detail-header">
-            <div class="detail-header-top">
+            <div class="detail-header-top" style="display:flex; align-items:center; gap:0.75rem;">
                 <span class="detail-title">${project.title}</span>
                 <span class="badge-status ${project.status}">${statusMap[project.status] || project.status}</span>
+                ${(project.status !== 'completed' && project.status !== 'failed') ? `
+                    <button class="btn btn-secondary" id="btn-force-restart-build" style="margin-left:auto; font-size:0.78rem; padding:0.35rem 0.7rem; display:flex; align-items:center; gap:0.35rem; background:rgba(255,255,255,0.05); border:1px solid hsl(var(--border-color)); color:hsl(var(--text-muted)); height:fit-content; margin-top:0; border-radius:6px; cursor:pointer;">
+                        <i class="fa-solid fa-rotate-left"></i> Restart Build
+                    </button>
+                ` : ''}
             </div>
             <div class="detail-info-bar">
                 <div class="info-item">
@@ -831,6 +836,40 @@ function renderProjectDetails(project) {
         renderWorkflowTimeline(project, selectedStepKey);
     } else if (currentSubTab === "journal") {
         renderProjectTimelineLogs(project);
+    }
+
+    // Hook click listener for the force-restart button
+    const forceRestartBtn = container.querySelector("#btn-force-restart-build");
+    if (forceRestartBtn) {
+        forceRestartBtn.addEventListener("click", async () => {
+            if (!confirm("Are you sure you want to force restart this build from the beginning? This will clear all generated progress and start a fresh run.")) {
+                return;
+            }
+            forceRestartBtn.disabled = true;
+            forceRestartBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Restarting...';
+            try {
+                const res = await fetch(`${API_BASE}/api/v1/workflows/${project.id}/run?force=true`, {
+                    method: "POST",
+                    headers: getHeaders()
+                });
+                if (res.ok) {
+                    alert("Build successfully restarted!");
+                    loadProjects(); // Reload projects to update list
+                    // Re-fetch project and re-render
+                    const updated = await res.json();
+                    renderProjectDetails(updated);
+                } else {
+                    const err = await res.json();
+                    alert(`Failed to restart build: ${err.detail}`);
+                    forceRestartBtn.disabled = false;
+                    forceRestartBtn.innerHTML = '<i class="fa-solid fa-rotate-left"></i> Restart Build';
+                }
+            } catch (e) {
+                console.error(e);
+                forceRestartBtn.disabled = false;
+                forceRestartBtn.innerHTML = '<i class="fa-solid fa-rotate-left"></i> Restart Build';
+            }
+        });
     }
 
     // Render alert banners

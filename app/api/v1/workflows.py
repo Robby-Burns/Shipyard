@@ -94,6 +94,7 @@ async def run_full_pipeline(
     workflow_id: uuid.UUID,
     request: Request,
     background_tasks: BackgroundTasks,
+    force: bool = False,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
@@ -108,6 +109,15 @@ async def run_full_pipeline(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden"
         )
+
+    # If force=True, reset the workflow state to CREATED first so it can execute
+    if force:
+        wf.status = WorkflowStatus.CREATED
+        wf.current_step = "created"
+        wf.artifacts = {}
+        wf.error_message = None
+        await db.commit()
+        await db.refresh(wf)
 
     # Prevent concurrent execution or starting a run from anything other than CREATED status
     if wf.status != WorkflowStatus.CREATED:
