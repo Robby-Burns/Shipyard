@@ -10,7 +10,7 @@ class CoordinatorAgent(BaseAgent):
     def __init__(self, db: AsyncSession):
         super().__init__(
             role=DisciplineRole.COORDINATOR,
-            capability=Capability.ARCHITECTURE,  # High-level planning uses architecture capability
+            capability=Capability.GENERAL_REASONING,
             db=db,
         )
 

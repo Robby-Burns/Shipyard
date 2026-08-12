@@ -80,13 +80,19 @@ class BaseAgent:
             f"Context:\n{request.context}"
         )
 
+        metadata = {}
+        if request.context and isinstance(request.context, dict) and "model_override" in request.context:
+            metadata["model_override"] = request.context["model_override"]
+
         route_req = ModelRouteRequest(
             capability=self.capability,
             messages=[
                 ChatMessage(role="system", content=system_prompt),
                 ChatMessage(role="user", content=user_message),
             ],
+            metadata=metadata if metadata else None,
         )
+
 
         route_res = await self.model_router.route(route_req, request_id=request_id)
         execution_time_ms = round((time.time() - start_time) * 1000, 2)

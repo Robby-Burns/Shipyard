@@ -1,7 +1,7 @@
 from typing import List, Optional
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
@@ -40,8 +40,8 @@ async def create_workflow(
 
 @router.get("", response_model=List[WorkflowRunResponse])
 async def list_workflows(
-    limit: int = 100,
-    offset: int = 0,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
@@ -116,8 +116,18 @@ async def run_full_pipeline(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
+    from sqlalchemy import select
+    from app.database.models.workflow import WorkflowRun
     service = WorkflowEngineService(db)
-    wf = await service.get_workflow(workflow_id)
+    
+    # Use SELECT ... FOR UPDATE to lock the row and prevent concurrent double-triggers
+    result = await db.execute(
+        select(WorkflowRun)
+        .where(WorkflowRun.id == workflow_id)
+        .with_for_update()
+    )
+    wf = result.scalar_one_or_none()
+    
     if not wf:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Workflow run not found"
@@ -137,7 +147,6 @@ async def run_full_pipeline(
         wf.approved_by = None
         wf.approved_at = None
         await db.commit()
-        await db.refresh(wf)
 
     # Prevent execution from terminal, awaiting approval, or escalated statuses
     if wf.status not in [
@@ -156,10 +165,10 @@ async def run_full_pipeline(
     request_id = getattr(request.state, "request_id", None)
     
     # In testing environment, run synchronously to utilize the overridden in-memory SQLite database
-    import sys
-    is_testing = (settings.app_env == "testing") or ("pytest" in sys.modules)
+    is_testing = (settings.app_env == "testing")
     if is_testing:
         try:
+            await db.commit()
             return await service.run_full_pipeline(
                 workflow_id, request_id=request_id
             )
@@ -169,6 +178,7 @@ async def run_full_pipeline(
             )
 
     # Queue the workflow run in a background task for development/production to prevent proxy timeouts
+    await db.commit()
     background_tasks.add_task(
         background_run_pipeline, workflow_id, request_id
     )
@@ -219,6 +229,7 @@ async def approve_workflow(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
+    req.approved_by = user.get("sub", "unknown")
     service = WorkflowEngineService(db)
     try:
         return await service.approve_production_deployment(

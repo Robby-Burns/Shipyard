@@ -144,10 +144,11 @@ class IntakeService:
             await self.db.commit()
 
             # Persist specification to file system
+            import anyio
             os.makedirs(self.artifacts_dir, exist_ok=True)
             file_path = os.path.join(self.artifacts_dir, f"{session.id}.md")
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(spec_markdown)
+            spec_anyio = anyio.Path(file_path)
+            await spec_anyio.write_text(spec_markdown, encoding="utf-8")
 
             await self.activity_log.record(
                 event_type="intake_specification_generated",

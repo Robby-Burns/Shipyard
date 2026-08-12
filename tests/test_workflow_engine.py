@@ -142,7 +142,7 @@ def test_workflow_endpoints_authenticated():
         assert approve_res.status_code == 200
         approved_data = approve_res.json()
         assert approved_data["status"] == "completed"
-        assert approved_data["approved_by"] == "lead_architect"
+        assert approved_data["approved_by"] == "workflow_admin"
 
         # 5. List workflows
         list_res = client.get("/api/v1/workflows", headers=headers)
@@ -188,3 +188,92 @@ async def test_background_run_pipeline_error_handling(async_session: AsyncSessio
     updated_wf = result.scalar_one()
     assert updated_wf.status == WorkflowStatus.FAILED
     assert updated_wf.error_message == "Simulated pipeline failure"
+
+
+@pytest.mark.anyio
+async def test_workflow_challenge_retry_flow(async_session: AsyncSession):
+    from unittest.mock import patch, AsyncMock
+    from app.services.agents.challenger import ChallengerAgent
+    from app.schemas.agent import AgentExecutionResponse, DisciplineRole
+    from app.schemas.workflow import WorkflowStatus
+    
+    service = WorkflowEngineService(async_session)
+    create_req = WorkflowCreateRequest(
+        title="Challenge Retry Test",
+        specification="Test specification content",
+    )
+    wf = await service.create_workflow(create_req, request_id="wf-retry-req")
+    
+    # Mock challenger to fail the first time, then pass the second time
+    mock_run_challenge = AsyncMock()
+    mock_run_challenge.side_effect = [
+        AgentExecutionResponse(
+            role=DisciplineRole.REVIEWER,
+            status="success",
+            output_text='<challenge status="failed" reason="Needs more details in step 1"></challenge>',
+            artifacts={"challenge_status": "failed", "challenge_reason": "Needs more details in step 1"},
+            model_used="gpt-4o-mini",
+        ),
+        AgentExecutionResponse(
+            role=DisciplineRole.REVIEWER,
+            status="success",
+            output_text='<challenge status="passed"></challenge>',
+            artifacts={"challenge_status": "passed", "challenge_reason": "No details provided."},
+            model_used="gpt-4o-mini",
+        )
+    ]
+    
+    with patch.object(ChallengerAgent, "run_challenge", mock_run_challenge):
+        # Run step 1
+        wf_updated = await service.execute_step(wf.id, request_id="wf-retry-req")
+        
+        # Since it failed once, it should still be in PLANNING state and retries=1
+        assert wf_updated.status == WorkflowStatus.PLANNING
+        assert wf_updated.artifacts.get("coordinator_planning_retries") == 1
+        assert wf_updated.artifacts.get("coordinator_planning_feedback") == "Needs more details in step 1"
+        
+        # Execute again - this time mock will return "passed"
+        wf_final = await service.execute_step(wf.id, request_id="wf-retry-req")
+        assert wf_final.status == WorkflowStatus.DESIGNING
+        assert "coordinator_planning_retries" not in wf_final.artifacts
+
+
+@pytest.mark.anyio
+async def test_workflow_challenge_escalation_flow(async_session: AsyncSession):
+    from unittest.mock import patch, AsyncMock
+    from app.services.agents.challenger import ChallengerAgent
+    from app.schemas.agent import AgentExecutionResponse, DisciplineRole
+    from app.schemas.workflow import WorkflowStatus
+    
+    service = WorkflowEngineService(async_session)
+    create_req = WorkflowCreateRequest(
+        title="Challenge Escalation Test",
+        specification="Test specification content",
+    )
+    wf = await service.create_workflow(create_req, request_id="wf-esc-req")
+    
+    # Mock challenger to always fail
+    mock_run_challenge = AsyncMock(return_value=AgentExecutionResponse(
+        role=DisciplineRole.REVIEWER,
+        status="success",
+        output_text='<challenge status="failed" reason="Failed validation check"></challenge>',
+        artifacts={"challenge_status": "failed", "challenge_reason": "Failed validation check"},
+        model_used="gpt-4o-mini",
+    ))
+    
+    with patch.object(ChallengerAgent, "run_challenge", mock_run_challenge):
+        # Attempt 1 (retries becomes 1)
+        wf = await service.execute_step(wf.id, request_id="wf-esc-req")
+        assert wf.status == WorkflowStatus.PLANNING
+        assert wf.artifacts.get("coordinator_planning_retries") == 1
+        
+        # Attempt 2 (retries becomes 2)
+        wf = await service.execute_step(wf.id, request_id="wf-esc-req")
+        assert wf.status == WorkflowStatus.PLANNING
+        assert wf.artifacts.get("coordinator_planning_retries") == 2
+        
+        # Attempt 3 (retries becomes 3 -> Escalates)
+        wf = await service.execute_step(wf.id, request_id="wf-esc-req")
+        assert wf.status == WorkflowStatus.ESCALATED
+        assert "failed challenge verification check after 2 retries" in wf.error_message
+

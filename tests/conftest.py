@@ -1,3 +1,6 @@
+import os
+os.environ["APP_ENV"] = "testing"
+
 import pytest
 import jwt
 from app.infrastructure.ratelimit_middleware import rate_limit_store

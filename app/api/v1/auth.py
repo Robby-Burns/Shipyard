@@ -10,8 +10,10 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str
 
+from typing import Literal
+
 @router.post("/token", response_model=TokenResponse)
-async def generate_dev_token(username: str = "dev_user", role: str = "admin"):
+async def generate_dev_token(username: str = "dev_user", role: Literal["admin", "developer", "viewer"] = "admin"):
     """
     DEVELOPMENT ONLY: Instantly generate a signed JWT token for sandbox testing.
     This route will return a HTTP 403 Forbidden error in production environments.

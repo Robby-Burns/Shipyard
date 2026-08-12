@@ -34,14 +34,9 @@ class MemoryGatewayService:
         if search_req.category:
             query = query.where(MemoryRecord.category == search_req.category)
 
-        # Check dialect using get_bind() safely to support pgvector on PostgreSQL
-        is_postgresql = False
-        try:
-            bind = self.db.get_bind()
-            if bind and getattr(bind, "dialect", None) is not None and bind.dialect.name == "postgresql":
-                is_postgresql = True
-        except Exception:
-            pass
+        # Check dialect safely to support pgvector on PostgreSQL
+        from app.config.settings import settings
+        is_postgresql = settings.database_url.startswith("postgresql") or settings.database_url.startswith("postgres")
 
         if search_req.query_embedding and is_postgresql:
             query = query.order_by(

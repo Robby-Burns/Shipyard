@@ -23,7 +23,9 @@ from app.services.agents import (
     QAAgent,
     ReviewerAgent,
     PlatformAgent,
+    ChallengerAgent,
 )
+from app.config.settings import settings
 
 logger = structlog.get_logger()
 
@@ -86,41 +88,100 @@ class WorkflowEngineService:
             workflow.current_step = "coordinator_planning"
             specification = workflow.specification
             await self.db.commit()
-            # await self.db.close()  # Removed: session managed by FastAPI
+
+            # Retrieve retry count and feedback
+            retries = workflow.artifacts.get("coordinator_planning_retries", 0)
+            feedback = workflow.artifacts.get("coordinator_planning_feedback", "")
+
+            task_input = "Breakdown & Planning"
+            if feedback:
+                task_input += f"\n\n[Correction Feedback from Challenger (Attempt {retries}):]\n{feedback}"
 
             agent = CoordinatorAgent(self.db)
             exec_res = await agent.run(
                 AgentExecutionRequest(
                     role=agent.role,
-                    task_input="Breakdown & Planning",
+                    task_input=task_input,
                     specification_ref=workflow_id,
                 ),
                 request_id=request_id,
             )
 
-            result = await self.db.execute(
-                select(WorkflowRun).where(WorkflowRun.id == workflow_id)
+            # Challenger runs to verify the plan
+            challenger = ChallengerAgent(self.db)
+            chal_res = await challenger.run_challenge(
+                step_name="coordinator_planning",
+                primary_output=exec_res.output_text,
+                specification_ref=workflow_id,
+                model_override=settings.default_model_challenge_coordinator,
+                request_id=request_id,
             )
-            workflow = result.scalar_one()
-            new_artifacts = dict(workflow.artifacts)
-            new_artifacts["build_plan"] = exec_res.output_text
-            workflow.artifacts = new_artifacts
-            workflow.status = WorkflowStatus.DESIGNING
-            workflow.current_step = "architect_designing"
-            await self.db.commit()
+
+            chal_status = chal_res.artifacts.get("challenge_status", "passed")
+            chal_reason = chal_res.artifacts.get("challenge_reason")
+
+            if chal_status == "failed":
+                retries += 1
+                result = await self.db.execute(
+                    select(WorkflowRun).where(WorkflowRun.id == workflow_id)
+                )
+                workflow = result.scalar_one()
+                new_artifacts = dict(workflow.artifacts)
+                new_artifacts["coordinator_planning_retries"] = retries
+                new_artifacts["coordinator_planning_feedback"] = chal_reason
+                new_artifacts["build_plan"] = exec_res.output_text
+                workflow.artifacts = new_artifacts
+
+                if retries > 2:
+                    workflow.status = WorkflowStatus.ESCALATED
+                    workflow.error_message = f"Planning failed challenge verification check after 2 retries. Challenger feedback: {chal_reason}"
+                    await self.db.commit()
+                    await self.activity_log.record(
+                        event_type="workflow_escalated",
+                        source="workflow_engine",
+                        request_id=request_id,
+                        payload={
+                            "workflow_id": str(workflow.id),
+                            "escalated_by": "challenger",
+                            "reason": workflow.error_message,
+                        },
+                    )
+                else:
+                    await self.db.commit()
+            else:
+                result = await self.db.execute(
+                    select(WorkflowRun).where(WorkflowRun.id == workflow_id)
+                )
+                workflow = result.scalar_one()
+                new_artifacts = dict(workflow.artifacts)
+                new_artifacts["build_plan"] = exec_res.output_text
+                # Clear retry state
+                new_artifacts.pop("coordinator_planning_retries", None)
+                new_artifacts.pop("coordinator_planning_feedback", None)
+                workflow.artifacts = new_artifacts
+                workflow.status = WorkflowStatus.DESIGNING
+                workflow.current_step = "architect_designing"
+                await self.db.commit()
 
         # Step 2: DESIGNING -> BUILDING (Architect)
         elif workflow.status == WorkflowStatus.DESIGNING:
             specification = workflow.specification
             build_plan = workflow.artifacts.get("build_plan")
             await self.db.commit()
-            # await self.db.close()  # Removed: session managed by FastAPI
+
+            # Retrieve retry count and feedback
+            retries = workflow.artifacts.get("architect_designing_retries", 0)
+            feedback = workflow.artifacts.get("architect_designing_feedback", "")
+
+            task_input = "System Blueprints & ADRs"
+            if feedback:
+                task_input += f"\n\n[Correction Feedback from Challenger (Attempt {retries}):]\n{feedback}"
 
             agent = ArchitectAgent(self.db)
             exec_res = await agent.run(
                 AgentExecutionRequest(
                     role=agent.role,
-                    task_input="System Blueprints & ADRs",
+                    task_input=task_input,
                     specification_ref=workflow_id,
                     context={
                         "build_plan": build_plan,
@@ -130,18 +191,63 @@ class WorkflowEngineService:
                 request_id=request_id,
             )
 
-            result = await self.db.execute(
-                select(WorkflowRun).where(WorkflowRun.id == workflow_id)
+            # Challenger runs to verify the architecture
+            challenger = ChallengerAgent(self.db)
+            chal_res = await challenger.run_challenge(
+                step_name="architect_designing",
+                primary_output=exec_res.output_text,
+                specification_ref=workflow_id,
+                model_override=settings.default_model_challenge_architect,
+                request_id=request_id,
             )
-            workflow = result.scalar_one()
-            new_artifacts = dict(workflow.artifacts)
-            new_artifacts["architecture_doc"] = exec_res.output_text
-            if exec_res.artifacts:
-                new_artifacts.update(exec_res.artifacts)
-            workflow.artifacts = new_artifacts
-            workflow.status = WorkflowStatus.BUILDING
-            workflow.current_step = "builder_building"
-            await self.db.commit()
+
+            chal_status = chal_res.artifacts.get("challenge_status", "passed")
+            chal_reason = chal_res.artifacts.get("challenge_reason")
+
+            if chal_status == "failed":
+                retries += 1
+                result = await self.db.execute(
+                    select(WorkflowRun).where(WorkflowRun.id == workflow_id)
+                )
+                workflow = result.scalar_one()
+                new_artifacts = dict(workflow.artifacts)
+                new_artifacts["architect_designing_retries"] = retries
+                new_artifacts["architect_designing_feedback"] = chal_reason
+                new_artifacts["architecture_doc"] = exec_res.output_text
+                workflow.artifacts = new_artifacts
+
+                if retries > 2:
+                    workflow.status = WorkflowStatus.ESCALATED
+                    workflow.error_message = f"Architecture design failed challenge verification check after 2 retries. Challenger feedback: {chal_reason}"
+                    await self.db.commit()
+                    await self.activity_log.record(
+                        event_type="workflow_escalated",
+                        source="workflow_engine",
+                        request_id=request_id,
+                        payload={
+                            "workflow_id": str(workflow.id),
+                            "escalated_by": "challenger",
+                            "reason": workflow.error_message,
+                        },
+                    )
+                else:
+                    await self.db.commit()
+            else:
+                result = await self.db.execute(
+                    select(WorkflowRun).where(WorkflowRun.id == workflow_id)
+                )
+                workflow = result.scalar_one()
+                new_artifacts = dict(workflow.artifacts)
+                new_artifacts["architecture_doc"] = exec_res.output_text
+                if exec_res.artifacts:
+                    new_artifacts.update(exec_res.artifacts)
+                # Clear retry state
+                new_artifacts.pop("architect_designing_retries", None)
+                new_artifacts.pop("architect_designing_feedback", None)
+                workflow.artifacts = new_artifacts
+                workflow.status = WorkflowStatus.BUILDING
+                workflow.current_step = "builder_building"
+                await self.db.commit()
 
         # Step 3: BUILDING -> REVIEWING (Builder)
         elif workflow.status == WorkflowStatus.BUILDING:
@@ -149,13 +255,20 @@ class WorkflowEngineService:
             build_plan = workflow.artifacts.get("build_plan")
             architecture_doc = workflow.artifacts.get("architecture_doc")
             await self.db.commit()
-            # await self.db.close()  # Removed: session managed by FastAPI
+
+            # Retrieve retry count and feedback
+            retries = workflow.artifacts.get("builder_building_retries", 0)
+            feedback = workflow.artifacts.get("builder_building_feedback", "")
+
+            task_input = "Feature Implementation"
+            if feedback:
+                task_input += f"\n\n[Correction Feedback from Challenger (Attempt {retries}):]\n{feedback}"
 
             agent = BuilderAgent(self.db)
             exec_res = await agent.run(
                 AgentExecutionRequest(
                     role=agent.role,
-                    task_input="Feature Implementation",
+                    task_input=task_input,
                     specification_ref=workflow_id,
                     context={
                         "build_plan": build_plan,
@@ -165,31 +278,84 @@ class WorkflowEngineService:
                 request_id=request_id,
             )
 
-            result = await self.db.execute(
-                select(WorkflowRun).where(WorkflowRun.id == workflow_id)
+            # Challenger runs to verify the generated code
+            challenger = ChallengerAgent(self.db)
+            chal_res = await challenger.run_challenge(
+                step_name="builder_building",
+                primary_output=exec_res.output_text,
+                specification_ref=workflow_id,
+                model_override=settings.default_model_challenge_builder,
+                request_id=request_id,
             )
-            workflow = result.scalar_one()
-            new_artifacts = dict(workflow.artifacts)
-            new_artifacts["generated_code"] = exec_res.output_text
-            if exec_res.artifacts:
-                new_artifacts.update(exec_res.artifacts)
-            workflow.artifacts = new_artifacts
-            workflow.status = WorkflowStatus.REVIEWING
-            workflow.current_step = "reviewer_reviewing"
-            await self.db.commit()
+
+            chal_status = chal_res.artifacts.get("challenge_status", "passed")
+            chal_reason = chal_res.artifacts.get("challenge_reason")
+
+            if chal_status == "failed":
+                retries += 1
+                result = await self.db.execute(
+                    select(WorkflowRun).where(WorkflowRun.id == workflow_id)
+                )
+                workflow = result.scalar_one()
+                new_artifacts = dict(workflow.artifacts)
+                new_artifacts["builder_building_retries"] = retries
+                new_artifacts["builder_building_feedback"] = chal_reason
+                new_artifacts["generated_code"] = exec_res.output_text
+                workflow.artifacts = new_artifacts
+
+                if retries > 2:
+                    workflow.status = WorkflowStatus.ESCALATED
+                    workflow.error_message = f"Code implementation failed challenge verification check after 2 retries. Challenger feedback: {chal_reason}"
+                    await self.db.commit()
+                    await self.activity_log.record(
+                        event_type="workflow_escalated",
+                        source="workflow_engine",
+                        request_id=request_id,
+                        payload={
+                            "workflow_id": str(workflow.id),
+                            "escalated_by": "challenger",
+                            "reason": workflow.error_message,
+                        },
+                    )
+                else:
+                    await self.db.commit()
+            else:
+                result = await self.db.execute(
+                    select(WorkflowRun).where(WorkflowRun.id == workflow_id)
+                )
+                workflow = result.scalar_one()
+                new_artifacts = dict(workflow.artifacts)
+                new_artifacts["generated_code"] = exec_res.output_text
+                if exec_res.artifacts:
+                    new_artifacts.update(exec_res.artifacts)
+                # Clear retry state
+                new_artifacts.pop("builder_building_retries", None)
+                new_artifacts.pop("builder_building_feedback", None)
+                workflow.artifacts = new_artifacts
+                workflow.status = WorkflowStatus.REVIEWING
+                workflow.current_step = "reviewer_reviewing"
+                await self.db.commit()
 
         # Step 4: REVIEWING -> TESTING (Reviewer)
         elif workflow.status == WorkflowStatus.REVIEWING:
             generated_code = workflow.artifacts.get("generated_code")
             architecture_doc = workflow.artifacts.get("architecture_doc")
+            specification = workflow.specification
             await self.db.commit()
-            # await self.db.close()  # Removed: session managed by FastAPI
+
+            # Retrieve retry count and feedback
+            retries = workflow.artifacts.get("reviewer_reviewing_retries", 0)
+            feedback = workflow.artifacts.get("reviewer_reviewing_feedback", "")
+
+            task_input = "Review generated code and implementation"
+            if feedback:
+                task_input += f"\n\n[Correction Feedback from Challenger (Attempt {retries}):]\n{feedback}"
 
             agent = ReviewerAgent(self.db)
             exec_res = await agent.run(
                 AgentExecutionRequest(
                     role=agent.role,
-                    task_input="Review generated code and implementation",
+                    task_input=task_input,
                     context={
                         "generated_code": generated_code,
                         "architecture_doc": architecture_doc,
@@ -198,53 +364,103 @@ class WorkflowEngineService:
                 request_id=request_id,
             )
 
-            result = await self.db.execute(
-                select(WorkflowRun).where(WorkflowRun.id == workflow_id)
+            # Challenger runs to verify the review
+            challenger = ChallengerAgent(self.db)
+            chal_res = await challenger.run_challenge(
+                step_name="reviewer_reviewing",
+                primary_output=exec_res.output_text,
+                specification_ref=workflow_id,
+                model_override=settings.default_model_challenge_reviewer,
+                request_id=request_id,
             )
-            workflow = result.scalar_one()
-            new_artifacts = dict(workflow.artifacts)
-            new_artifacts["code_review"] = exec_res.output_text
-            if exec_res.artifacts:
-                new_artifacts.update(exec_res.artifacts)
-            workflow.artifacts = new_artifacts
 
-            # Handle code review rejection / request changes
-            review_status = exec_res.artifacts.get("status") if exec_res.artifacts else "approved"
-            if review_status == "request_changes":
-                workflow.status = WorkflowStatus.ESCALATED
-                workflow.error_message = f"Code Review Rejected: {exec_res.artifacts.get('reason', 'changes requested')}"
-                await self.db.commit()
-                # Log the escalation event
-                await self.activity_log.record(
-                    event_type="workflow_escalated",
-                    source="workflow_engine",
-                    request_id=request_id,
-                    payload={
-                        "workflow_id": str(workflow.id),
-                        "escalated_by": "reviewer",
-                        "reason": workflow.error_message,
-                    },
+            chal_status = chal_res.artifacts.get("challenge_status", "passed")
+            chal_reason = chal_res.artifacts.get("challenge_reason")
+
+            if chal_status == "failed":
+                retries += 1
+                result = await self.db.execute(
+                    select(WorkflowRun).where(WorkflowRun.id == workflow_id)
                 )
+                workflow = result.scalar_one()
+                new_artifacts = dict(workflow.artifacts)
+                new_artifacts["reviewer_reviewing_retries"] = retries
+                new_artifacts["reviewer_reviewing_feedback"] = chal_reason
+                new_artifacts["code_review"] = exec_res.output_text
+                workflow.artifacts = new_artifacts
+
+                if retries > 2:
+                    workflow.status = WorkflowStatus.ESCALATED
+                    workflow.error_message = f"Code review failed challenge verification check after 2 retries. Challenger feedback: {chal_reason}"
+                    await self.db.commit()
+                    await self.activity_log.record(
+                        event_type="workflow_escalated",
+                        source="workflow_engine",
+                        request_id=request_id,
+                        payload={
+                            "workflow_id": str(workflow.id),
+                            "escalated_by": "challenger",
+                            "reason": workflow.error_message,
+                        },
+                    )
+                else:
+                    await self.db.commit()
             else:
-                workflow.status = WorkflowStatus.TESTING
-                workflow.current_step = "qa_testing"
-                await self.db.commit()
+                result = await self.db.execute(
+                    select(WorkflowRun).where(WorkflowRun.id == workflow_id)
+                )
+                workflow = result.scalar_one()
+                new_artifacts = dict(workflow.artifacts)
+                new_artifacts["code_review"] = exec_res.output_text
+                if exec_res.artifacts:
+                    new_artifacts.update(exec_res.artifacts)
+                # Clear retry state
+                new_artifacts.pop("reviewer_reviewing_retries", None)
+                new_artifacts.pop("reviewer_reviewing_feedback", None)
+                workflow.artifacts = new_artifacts
+
+                # Handle code review rejection / request changes
+                review_status = exec_res.artifacts.get("status") if exec_res.artifacts else "approved"
+                if review_status == "request_changes":
+                    workflow.status = WorkflowStatus.ESCALATED
+                    workflow.error_message = f"Code Review Rejected: {exec_res.artifacts.get('reason', 'changes requested')}"
+                    await self.db.commit()
+                    # Log the escalation event
+                    await self.activity_log.record(
+                        event_type="workflow_escalated",
+                        source="workflow_engine",
+                        request_id=request_id,
+                        payload={
+                            "workflow_id": str(workflow.id),
+                            "escalated_by": "reviewer",
+                            "reason": workflow.error_message,
+                        },
+                    )
+                else:
+                    workflow.status = WorkflowStatus.TESTING
+                    workflow.current_step = "qa_testing"
+                    await self.db.commit()
 
         # Step 5: TESTING -> AWAITING_APPROVAL (QA & Platform)
         elif workflow.status == WorkflowStatus.TESTING:
             generated_code = workflow.artifacts.get("generated_code")
             code_review = workflow.artifacts.get("code_review")
+            specification = workflow.specification
             await self.db.commit()
-            # await self.db.close()  # Removed: session managed by FastAPI
+
+            # Retrieve retry count and feedback for QA
+            retries = workflow.artifacts.get("qa_testing_retries", 0)
+            feedback = workflow.artifacts.get("qa_testing_feedback", "")
+
+            task_input = "Verify acceptance criteria and perform release validation"
+            if feedback:
+                task_input += f"\n\n[Correction Feedback from Challenger (Attempt {retries}):]\n{feedback}"
 
             agent = QAAgent(self.db)
             exec_res = await agent.run(
                 AgentExecutionRequest(
                     role=agent.role,
-                    task_input=(
-                        "Verify acceptance criteria and perform release"
-                        " validation"
-                    ),
+                    task_input=task_input,
                     context={
                         "generated_code": generated_code,
                         "code_review": code_review,
@@ -253,79 +469,172 @@ class WorkflowEngineService:
                 request_id=request_id,
             )
 
-            result = await self.db.execute(
-                select(WorkflowRun).where(WorkflowRun.id == workflow_id)
+            # Challenger runs to verify the QA Report
+            challenger = ChallengerAgent(self.db)
+            chal_res = await challenger.run_challenge(
+                step_name="qa_testing",
+                primary_output=exec_res.output_text,
+                specification_ref=workflow_id,
+                model_override=settings.default_model_challenge_qa,
+                request_id=request_id,
             )
-            workflow = result.scalar_one()
-            new_artifacts = dict(workflow.artifacts)
-            new_artifacts["qa_report"] = exec_res.output_text
-            if exec_res.artifacts:
-                new_artifacts.update(exec_res.artifacts)
-            workflow.artifacts = new_artifacts
 
-            qa_status = exec_res.artifacts.get("qa_status") if exec_res.artifacts else "PASSED"
-            if qa_status == "FAILED":
-                workflow.status = WorkflowStatus.ESCALATED
-                workflow.error_message = "QA Verification Failed: acceptance criteria not satisfied."
-                await self.db.commit()
-                # Log the escalation event
-                await self.activity_log.record(
-                    event_type="workflow_escalated",
-                    source="workflow_engine",
-                    request_id=request_id,
-                    payload={
-                        "workflow_id": str(workflow.id),
-                        "escalated_by": "qa",
-                        "reason": workflow.error_message,
-                    },
-                )
-            else:
-                # QA Passed -> Execute Platform Agent to gather metrics & log recommendations
-                platform_agent = PlatformAgent(self.db)
-                platform_res = await platform_agent.run(
-                    AgentExecutionRequest(
-                        role=platform_agent.role,
-                        task_input="Analyze pipeline latency metrics and operational recommendations",
-                        context={
-                            "workflow_id": str(workflow_id),
-                            "qa_report": exec_res.output_text,
-                        }
-                    ),
-                    request_id=request_id
-                )
+            chal_status = chal_res.artifacts.get("challenge_status", "passed")
+            chal_reason = chal_res.artifacts.get("challenge_reason")
 
-                new_artifacts["platform_recommendations"] = platform_res.output_text
-                if platform_res.artifacts:
-                    new_artifacts.update(platform_res.artifacts)
+            if chal_status == "failed":
+                retries += 1
+                result = await self.db.execute(
+                    select(WorkflowRun).where(WorkflowRun.id == workflow_id)
+                )
+                workflow = result.scalar_one()
+                new_artifacts = dict(workflow.artifacts)
+                new_artifacts["qa_testing_retries"] = retries
+                new_artifacts["qa_testing_feedback"] = chal_reason
+                new_artifacts["qa_report"] = exec_res.output_text
                 workflow.artifacts = new_artifacts
 
-                # Propose candidates for Shared Knowledge if identified
-                knowledge_candidate = platform_res.artifacts.get("knowledge_candidate") if platform_res.artifacts else None
-                if knowledge_candidate:
-                    from app.services.knowledge_service import KnowledgeService
-                    from app.schemas.knowledge import KnowledgeItemCreate, MemoryTier
-                    ks = KnowledgeService(self.db)
-                    await ks.propose_candidate(KnowledgeItemCreate(
-                        title=f"Platform Knowledge Candidate for run {workflow_id}",
-                        tier=MemoryTier.CANDIDATE,
-                        category="platform",
-                        content=knowledge_candidate,
-                    ))
-
-                # Log Platform Recommendations to the journal
-                await self.activity_log.record(
-                    event_type="platform_recommendation",
-                    source="agent_platform",
-                    request_id=request_id,
-                    payload={
-                        "workflow_id": str(workflow.id),
-                        "recommendation": platform_res.output_text,
-                    },
+                if retries > 2:
+                    workflow.status = WorkflowStatus.ESCALATED
+                    workflow.error_message = f"QA testing failed challenge verification check after 2 retries. Challenger feedback: {chal_reason}"
+                    await self.db.commit()
+                    await self.activity_log.record(
+                        event_type="workflow_escalated",
+                        source="workflow_engine",
+                        request_id=request_id,
+                        payload={
+                            "workflow_id": str(workflow.id),
+                            "escalated_by": "challenger",
+                            "reason": workflow.error_message,
+                        },
+                    )
+                else:
+                    await self.db.commit()
+            else:
+                result = await self.db.execute(
+                    select(WorkflowRun).where(WorkflowRun.id == workflow_id)
                 )
+                workflow = result.scalar_one()
+                new_artifacts = dict(workflow.artifacts)
+                new_artifacts["qa_report"] = exec_res.output_text
+                if exec_res.artifacts:
+                    new_artifacts.update(exec_res.artifacts)
+                
+                # Clear QA retry state
+                new_artifacts.pop("qa_testing_retries", None)
+                new_artifacts.pop("qa_testing_feedback", None)
+                workflow.artifacts = new_artifacts
 
-                workflow.status = WorkflowStatus.AWAITING_APPROVAL
-                workflow.current_step = "awaiting_human_production_approval"
-                await self.db.commit()
+                qa_status = exec_res.artifacts.get("qa_status") if exec_res.artifacts else "PASSED"
+                if qa_status == "FAILED":
+                    workflow.status = WorkflowStatus.ESCALATED
+                    workflow.error_message = "QA Verification Failed: acceptance criteria not satisfied."
+                    await self.db.commit()
+                    await self.activity_log.record(
+                        event_type="workflow_escalated",
+                        source="workflow_engine",
+                        request_id=request_id,
+                        payload={
+                            "workflow_id": str(workflow.id),
+                            "escalated_by": "qa",
+                            "reason": workflow.error_message,
+                        },
+                    )
+                else:
+                    # Retrieve retry count and feedback for Platform
+                    plat_retries = workflow.artifacts.get("platform_reporting_retries", 0)
+                    plat_feedback = workflow.artifacts.get("platform_reporting_feedback", "")
+
+                    plat_task_input = "Analyze pipeline latency metrics and operational recommendations"
+                    if plat_feedback:
+                        plat_task_input += f"\n\n[Correction Feedback from Challenger (Attempt {plat_retries}):]\n{plat_feedback}"
+
+                    # QA Passed -> Execute Platform Agent to gather metrics & log recommendations
+                    platform_agent = PlatformAgent(self.db)
+                    platform_res = await platform_agent.run(
+                        AgentExecutionRequest(
+                            role=platform_agent.role,
+                            task_input=plat_task_input,
+                            context={
+                                "workflow_id": str(workflow_id),
+                                "qa_report": exec_res.output_text,
+                            }
+                        ),
+                        request_id=request_id
+                    )
+
+                    # Challenger runs to verify the Platform recommendations
+                    platform_chal_res = await challenger.run_challenge(
+                        step_name="platform_reporting",
+                        primary_output=platform_res.output_text,
+                        specification_ref=workflow_id,
+                        model_override=settings.default_model_challenge_platform,
+                        request_id=request_id,
+                    )
+                    
+                    plat_chal_status = platform_chal_res.artifacts.get("challenge_status", "passed")
+                    plat_chal_reason = platform_chal_res.artifacts.get("challenge_reason")
+
+                    if plat_chal_status == "failed":
+                        plat_retries += 1
+                        new_artifacts["platform_reporting_retries"] = plat_retries
+                        new_artifacts["platform_reporting_feedback"] = plat_chal_reason
+                        new_artifacts["platform_recommendations"] = platform_res.output_text
+                        workflow.artifacts = new_artifacts
+                        
+                        if plat_retries > 2:
+                            workflow.status = WorkflowStatus.ESCALATED
+                            workflow.error_message = f"Platform analysis failed challenge verification check after 2 retries. Challenger feedback: {plat_chal_reason}"
+                            await self.db.commit()
+                            await self.activity_log.record(
+                                event_type="workflow_escalated",
+                                source="workflow_engine",
+                                request_id=request_id,
+                                payload={
+                                    "workflow_id": str(workflow.id),
+                                    "escalated_by": "challenger",
+                                    "reason": workflow.error_message,
+                                },
+                            )
+                        else:
+                            await self.db.commit()
+                    else:
+                        new_artifacts["platform_recommendations"] = platform_res.output_text
+                        if platform_res.artifacts:
+                            new_artifacts.update(platform_res.artifacts)
+                        
+                        # Clear platform retry state
+                        new_artifacts.pop("platform_reporting_retries", None)
+                        new_artifacts.pop("platform_reporting_feedback", None)
+                        workflow.artifacts = new_artifacts
+
+                        # Propose candidates for Shared Knowledge if identified
+                        knowledge_candidate = platform_res.artifacts.get("knowledge_candidate") if platform_res.artifacts else None
+                        if knowledge_candidate:
+                            from app.services.knowledge_service import KnowledgeService
+                            from app.schemas.knowledge import KnowledgeItemCreate, MemoryTier
+                            ks = KnowledgeService(self.db)
+                            await ks.propose_candidate(KnowledgeItemCreate(
+                                title=f"Platform Knowledge Candidate for run {workflow_id}",
+                                tier=MemoryTier.CANDIDATE,
+                                category="platform",
+                                content=knowledge_candidate,
+                            ))
+
+                        # Log Platform Recommendations to the journal
+                        await self.activity_log.record(
+                            event_type="platform_recommendation",
+                            source="agent_platform",
+                            request_id=request_id,
+                            payload={
+                                "workflow_id": str(workflow.id),
+                                "recommendation": platform_res.output_text,
+                            },
+                        )
+
+                        workflow.status = WorkflowStatus.AWAITING_APPROVAL
+                        workflow.current_step = "awaiting_human_production_approval"
+                        await self.db.commit()
 
         await self.db.refresh(workflow)
         return workflow
@@ -350,11 +659,14 @@ class WorkflowEngineService:
         # 2. Run the first step
         workflow = await self.execute_step(workflow_id, request_id)
 
-        # 3. Execution loop
-        while True:
+        # 3. Execution loop with iteration cap to prevent runaway loops
+        MAX_STEPS = 15
+        steps_executed = 0
+        while steps_executed < MAX_STEPS:
             # Refresh workflow state from DB to check for pause/terminate signals
             await self.db.refresh(workflow)
             if workflow.status not in [
+                WorkflowStatus.PLANNING,
                 WorkflowStatus.DESIGNING,
                 WorkflowStatus.BUILDING,
                 WorkflowStatus.REVIEWING,
@@ -362,6 +674,14 @@ class WorkflowEngineService:
             ]:
                 break
             workflow = await self.execute_step(workflow_id, request_id)
+            steps_executed += 1
+        else:
+            # Runaway loop detected
+            logger.error("workflow_runaway_loop_detected", workflow_id=str(workflow_id), max_steps=MAX_STEPS)
+            workflow.status = WorkflowStatus.ESCALATED
+            workflow.error_message = f"Execution exceeded maximum safety loop of {MAX_STEPS} steps."
+            await self.db.commit()
+            
         return workflow
 
     async def escalate_workflow(
@@ -487,12 +807,13 @@ class WorkflowEngineService:
         )
 
         # Write to disk
+        import anyio
         target_dir = os.path.join("artifacts/passports", str(workflow.id))
         os.makedirs(target_dir, exist_ok=True)
 
         passport_path = os.path.join(target_dir, "engineering_passport.md")
-        with open(passport_path, "w", encoding="utf-8") as f:
-            f.write(pass_res.output_text)
+        passport_anyio = anyio.Path(passport_path)
+        await passport_anyio.write_text(pass_res.output_text, encoding="utf-8")
 
         guide_path = os.path.join(target_dir, "deployment_guide.md")
         guide_content = (
@@ -505,9 +826,8 @@ class WorkflowEngineService:
             "3. Run healthchecks: `/healthz` and `/readyz`.\n"
             "4. Verify application operations."
         )
-        with open(guide_path, "w", encoding="utf-8") as f:
-            f.write(guide_content)
-
+        guide_anyio = anyio.Path(guide_path)
+        await guide_anyio.write_text(guide_content, encoding="utf-8")
         new_artifacts = dict(workflow.artifacts)
         new_artifacts["engineering_passport_path"] = passport_path
         new_artifacts["deployment_guide_path"] = guide_path

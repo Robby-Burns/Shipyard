@@ -47,7 +47,7 @@ async def test_coordinator_agent_direct_execution(
     assert response.role == DisciplineRole.COORDINATOR
     assert response.status == "success"
     assert len(response.output_text) > 0
-    assert response.model_used == settings.default_model_architecture
+    assert response.model_used == settings.default_model_general_reasoning
 
     # Verify ActivityLog entries
     res = await async_session.execute(

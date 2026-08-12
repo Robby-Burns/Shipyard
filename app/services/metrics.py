@@ -56,20 +56,25 @@ class MetricsService:
 
     async def get_tool_execution_metrics(self) -> ToolExecutionMetrics:
         """Calculate total tool invocations, success %, and mean execution time."""
-        res = await self.db.execute(select(ToolExecutionLog))
-        tool_logs = list(res.scalars().all())
+        from sqlalchemy import func, case
+        stmt = select(
+            func.count(),
+            func.sum(case((ToolExecutionLog.is_success == True, 1), else_=0)),
+            func.sum(ToolExecutionLog.execution_time_ms)
+        )
+        res = await self.db.execute(stmt)
+        total_executions, successful_executions, total_time_ms = res.fetchone()
 
-        total_executions = len(tool_logs)
+        total_executions = total_executions or 0
         if total_executions == 0:
             return ToolExecutionMetrics()
 
-        successful_executions = sum(1 for log in tool_logs if log.is_success)
+        successful_executions = successful_executions or 0
         failed_executions = total_executions - successful_executions
-
         success_rate_pct = round(
             (successful_executions / total_executions) * 100, 2
         )
-        total_time_ms = sum(log.execution_time_ms for log in tool_logs)
+        total_time_ms = total_time_ms or 0
         avg_execution_time_ms = round(total_time_ms / total_executions, 2)
 
         return ToolExecutionMetrics(
@@ -79,6 +84,7 @@ class MetricsService:
             success_rate_pct=success_rate_pct,
             avg_execution_time_ms=avg_execution_time_ms,
         )
+
 
     async def get_model_usage_metrics(self) -> ModelUsageMetrics:
         """Aggregate model routing activity by capability."""

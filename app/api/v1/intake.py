@@ -100,6 +100,18 @@ async def upload_intake_file(
         )
     
     try:
+        # Check size before reading fully into memory to prevent OOM
+        file.file.seek(0, 2)
+        file_size = file.file.tell()
+        file.file.seek(0)
+        
+        MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10MB
+        if file_size > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"Uploaded file exceeds maximum limit of {MAX_UPLOAD_BYTES / (1024 * 1024)}MB."
+            )
+            
         file_bytes = await file.read()
         from app.utils.file_parser import extract_text_from_file
         result = await extract_text_from_file(file.filename, file_bytes)

@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     app_env: str = "development"
-    debug: bool = True
+    debug: bool = False
     port: int = 8000
     database_url: str = (
         "postgresql+asyncpg://postgres:postgres@localhost:5432/shipyard"
@@ -48,6 +48,15 @@ class Settings(BaseSettings):
     default_model_code_review: str = "openai/gpt-4o"
     default_model_testing: str = "openai/gpt-4o-mini"
     default_model_general_reasoning: str = "google/gemini-2.5-flash"
+    default_model_challenge: str = "openai/gpt-4o-mini"
+
+    # Challenger models for back-and-forth loops
+    default_model_challenge_coordinator: str = "openai/gpt-4o-mini"
+    default_model_challenge_architect: str = "openai/gpt-4o"
+    default_model_challenge_builder: str = "google/gemini-2.5-flash"
+    default_model_challenge_reviewer: str = "anthropic/claude-3.5-sonnet"
+    default_model_challenge_qa: str = "anthropic/claude-3.5-sonnet"
+    default_model_challenge_platform: str = "openai/gpt-4o-mini"
 
     # Memory retention periods (in days)
     private_memory_retention_days: int = 7
@@ -64,9 +73,13 @@ class Settings(BaseSettings):
 
         # Fallback to aiosqlite if asyncpg is not compiled/installed on host (e.g. Windows ARM64)
         if v.startswith("postgresql+asyncpg://") and not importlib.util.find_spec("asyncpg"):
+            import os
+            if os.environ.get("APP_ENV", "development") == "production":
+                raise ValueError("asyncpg is required for PostgreSQL in production, but is not installed on this host.")
             return "sqlite+aiosqlite:///./shipyard.db"
 
         return v
+
 
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8"

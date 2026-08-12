@@ -5,6 +5,7 @@ from app.services.agents.coordinator import CoordinatorAgent
 from app.services.agents.platform import PlatformAgent
 from app.services.agents.qa import QAAgent
 from app.services.agents.reviewer import ReviewerAgent
+from app.services.agents.challenger import ChallengerAgent
 
 __all__ = [
     "BaseAgent",
@@ -14,4 +15,6 @@ __all__ = [
     "ReviewerAgent",
     "QAAgent",
     "PlatformAgent",
+    "ChallengerAgent",
 ]
+

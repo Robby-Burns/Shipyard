@@ -9,6 +9,8 @@ class Capability(str, Enum):
     CODE_REVIEW = "code_review"
     TESTING = "testing"
     GENERAL_REASONING = "general_reasoning"
+    CHALLENGE = "challenge"
+
 
 
 class ChatMessage(BaseModel):

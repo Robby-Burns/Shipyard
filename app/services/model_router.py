@@ -29,6 +29,7 @@ class ModelRouterService:
             Capability.CODE_REVIEW: settings.default_model_code_review,
             Capability.TESTING: settings.default_model_testing,
             Capability.GENERAL_REASONING: settings.default_model_general_reasoning,
+            Capability.CHALLENGE: settings.default_model_challenge,
         }
         return capability_map.get(
             capability, settings.default_model_general_reasoning
@@ -38,6 +39,9 @@ class ModelRouterService:
         self, request: ModelRouteRequest, request_id: Optional[str] = None
     ) -> ModelRouteResponse:
         model_name = self.resolve_model(request.capability)
+        if request.metadata and "model_override" in request.metadata:
+            model_name = request.metadata["model_override"]
+
 
         # Log routing attempt
         await self.activity_log_service.record(
@@ -177,6 +181,12 @@ class ModelRouterService:
                 system_prompt = msg.content
             elif msg.role == "user":
                 user_prompt = msg.content
+
+        # 0. Challenger/Verifier Agent
+        if "Challenger/Verifier" in system_prompt or "verifier" in system_prompt.lower() or "challenger" in system_prompt.lower():
+            if "intentionally_fail" in user_prompt or "mock_challenge_fail" in user_prompt:
+                return '<challenge status="failed" reason="Intentionally failed challenge verification check for testing."></challenge>'
+            return '<challenge status="passed"></challenge>'
 
         # 1. Intake Coordinator / Specification Writer
         if "Intake Coordinator" in system_prompt or "Specification Writer" in system_prompt:

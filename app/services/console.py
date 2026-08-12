@@ -40,13 +40,13 @@ class ConsoleService:
 
     async def get_candidate_knowledge_count(self) -> int:
         """Count candidate knowledge items pending review."""
-        res = await self.db.execute(
-            select(KnowledgeItem).where(
+        from sqlalchemy import func
+        return await self.db.scalar(
+            select(func.count()).select_from(KnowledgeItem).where(
                 KnowledgeItem.tier == MemoryTier.CANDIDATE,
                 KnowledgeItem.status == KnowledgeStatus.PROPOSED,
             )
-        )
-        return len(list(res.scalars().all()))
+        ) or 0
 
     async def get_recent_activities(self, limit: int = 10) -> List[Dict[str, Any]]:
         """Fetch recent operational activity log entries."""
@@ -70,14 +70,14 @@ class ConsoleService:
 
     async def get_recent_error_count(self) -> int:
         """Count recent operational error and escalation logs."""
-        res = await self.db.execute(
-            select(ActivityLog).where(
+        from sqlalchemy import func
+        return await self.db.scalar(
+            select(func.count()).select_from(ActivityLog).where(
                 ActivityLog.event_type.like("%failed%")
                 | ActivityLog.event_type.like("%error%")
                 | ActivityLog.event_type.like("%escalated%")
             )
-        )
-        return len(list(res.scalars().all()))
+        ) or 0
 
     async def get_overview_summary(self) -> ConsoleOverviewResponse:
         """Compile a high-level summary of active system state for the Operations Console."""

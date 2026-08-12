@@ -58,6 +58,7 @@ class ArchitectAgent(BaseAgent):
                 # Fallback to any content inside <diagram>
                 diagram_match = re.search(r"<diagram>\s*(.*?)\s*</diagram>", content, re.DOTALL | re.IGNORECASE)
             
+            import anyio
             if diagram_match:
                 diagram_content = diagram_match.group(1).strip()
                 if diagram_content.startswith("```mermaid"):
@@ -66,15 +67,13 @@ class ArchitectAgent(BaseAgent):
                     diagram_content = diagram_content[:-3].strip()
 
                 diagram_path = os.path.join(target_dir, "diagram.mermaid")
-                with open(diagram_path, "w", encoding="utf-8") as f:
-                    f.write(diagram_content)
+                await anyio.Path(diagram_path).write_text(diagram_content, encoding="utf-8")
                 generated_artifacts["diagram_path"] = diagram_path
             else:
                 # Fallback for development/testing if LLM doesn't output diagram tags
                 diagram_content = "graph TD;\n  A-->B;"
                 diagram_path = os.path.join(target_dir, "diagram.mermaid")
-                with open(diagram_path, "w", encoding="utf-8") as f:
-                    f.write(diagram_content)
+                await anyio.Path(diagram_path).write_text(diagram_content, encoding="utf-8")
                 generated_artifacts["diagram_path"] = diagram_path
 
             # 2. Parse ADRs
@@ -87,8 +86,7 @@ class ArchitectAgent(BaseAgent):
                 adr_id = sanitize_path_component(adr_orig_id)
                 adr_file_name = f"{adr_id}.md"
                 adr_path = os.path.join(target_dir, adr_file_name)
-                with open(adr_path, "w", encoding="utf-8") as f:
-                    f.write(adr_body)
+                await anyio.Path(adr_path).write_text(adr_body, encoding="utf-8")
                 
                 adrs[adr_orig_id] = adr_path
 

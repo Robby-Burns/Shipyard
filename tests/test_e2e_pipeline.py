@@ -105,7 +105,7 @@ def test_shipyard_e2e_full_platform_lifecycle():
         approved_data = approve_res.json()
         assert approved_data["status"] == "completed"
         assert approved_data["current_step"] == "completed_and_deployed"
-        assert approved_data["approved_by"] == "vp_engineering_sarah"
+        assert approved_data["approved_by"] == "e2e_lead_engineer"
         assert approved_data["approved_at"] is not None
 
         # ---------------------------------------------------------------------
