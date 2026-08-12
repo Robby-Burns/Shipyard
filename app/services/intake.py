@@ -106,7 +106,8 @@ class IntakeService:
                 "- Execution Limits: 180s global boundary, 20s individual adapter timeouts\n"
                 "- Gates: Gate 1 (outbound only) and Gate 2 (inbound + outbound)\n\n"
                 "For anything genuinely unspecified, make a reasonable engineering default and label it clearly as an implementation choice or assumption.\n\n"
-                "Output 'VALIDATED' on the very first line, followed by the complete Engineering Specification in Markdown."
+                "Output 'VALIDATED' on the very first line, followed by the complete Engineering Specification in Markdown.\n"
+                "Write every section completely. Do not stop mid-list, mid-table, or mid-section."
             )
         else:
             system_prompt = (
@@ -132,6 +133,9 @@ class IntakeService:
             capability=Capability.GENERAL_REASONING,
             messages=llm_messages,
             temperature=0.2,
+            # Specifications are substantially longer than ordinary chat
+            # responses; the shared 2,000-token default truncates them.
+            max_tokens=8000,
         )
         route_res = await self.model_router.route(route_req, request_id=request_id)
         llm_content = route_res.content.strip()

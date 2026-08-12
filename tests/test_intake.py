@@ -13,6 +13,7 @@ from app.database.session import Base
 from app.database.models.intake import IntakeSession
 from app.database.session import get_db
 from app.main import app
+from app.schemas.model_router import ModelRouteResponse
 from app.services.intake import IntakeService
 
 client = TestClient(app)
@@ -73,6 +74,32 @@ async def test_intake_service_lifecycle(async_session: AsyncSession):
     # Clean up test artifacts dir if created
     if os.path.exists(service.artifacts_dir):
         shutil.rmtree(service.artifacts_dir)
+
+
+@pytest.mark.anyio
+async def test_intake_uses_large_output_budget_for_spec_generation(
+    async_session: AsyncSession,
+):
+    service = IntakeService(async_session)
+    captured_request = None
+
+    async def mock_route(route_request, request_id=None):
+        nonlocal captured_request
+        captured_request = route_request
+        return ModelRouteResponse(
+            id="test-completion",
+            capability=route_request.capability,
+            model_used="test-model",
+            content="Please provide more details.",
+            usage={},
+        )
+
+    service.model_router.route = mock_route
+    session = await service.create_session(title="Spec Budget Test")
+    await service.send_chat_message(session.id, "I want to build a service")
+
+    assert captured_request is not None
+    assert captured_request.max_tokens == 8000
 
 
 def test_intake_endpoints_full_flow(auth_headers, other_user_headers):

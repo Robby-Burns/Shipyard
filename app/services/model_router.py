@@ -119,8 +119,10 @@ class ModelRouterService:
                     res.raise_for_status()
                     data = res.json()
 
-                    content = data["choices"][0]["message"]["content"]
-                    usage = data.get("usage", {})
+                    choice = data["choices"][0]
+                    content = choice["message"]["content"]
+                    usage = dict(data.get("usage", {}))
+                    usage["finish_reason"] = choice.get("finish_reason")
 
                     response = ModelRouteResponse(
                         id=data.get("id", "completion-id"),
