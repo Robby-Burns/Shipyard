@@ -89,7 +89,7 @@ class IntakeService:
                 "Continue the conversation normally: answer questions, explain decisions, and incorporate requested changes.\n"
                 "If the user requests a change to the specification, output 'VALIDATED' on the very first line, followed by the complete updated Engineering Specification in Markdown.\n"
                 "If the user is only asking a question or discussing the design, respond conversationally without the VALIDATED marker.\n\n"
-                "When revising the specification, preserve useful content, update only what is affected, and remove repetition. Use concise technical writing, compact bullets, and small tables; do not add filler or full source code.\n\n"
+                "When revising the specification, preserve useful content, update only what is affected, and remove repetition. Use concise technical writing, compact bullets, and small tables; do not add filler or full source code. Completeness takes priority over a word target.\n\n"
                 "CURRENT ENGINEERING SPECIFICATION:\n"
                 f"{session.specification}"
             )
@@ -108,7 +108,7 @@ class IntakeService:
                 "- Execution Limits: 180s global boundary, 20s individual adapter timeouts\n"
                 "- Gates: Gate 1 (outbound only) and Gate 2 (inbound + outbound)\n\n"
                 "For anything genuinely unspecified, make a reasonable engineering default and label it clearly as an implementation choice or assumption.\n\n"
-                "Use concise technical writing. Target roughly 1,200-1,800 words.\n"
+                "Use concise technical writing and produce the smallest complete specification possible.\n"
                 "Capture decisions, requirements, interfaces, constraints, risks, and acceptance criteria; do not repeat the user's background, add filler, include full source code, or restate the same requirement in multiple sections.\n"
                 "Prefer compact bullets and small tables where they improve clarity.\n\n"
                 "Output 'VALIDATED' on the very first line, followed by the complete Engineering Specification in Markdown.\n"
@@ -145,6 +145,16 @@ class IntakeService:
         route_res = await self.model_router.route(route_req, request_id=request_id)
         llm_content = route_res.content.strip()
 
+        # OpenRouter can end a long response with finish_reason=length even
+        # when the request itself succeeded. Continue only specification
+        # responses, not ordinary conversational replies.
+        if llm_content.startswith("VALIDATED") and route_res.usage.get("finish_reason") == "length":
+            partial_specification = llm_content[len("VALIDATED"):].strip()
+            completed_specification = await self._continue_specification(
+                partial_specification, request_id=request_id
+            )
+            llm_content = f"VALIDATED\n{completed_specification}"
+
         # 4. Check if LLM response validates the spec
         if llm_content.startswith("VALIDATED"):
             # Extract specification content following VALIDATED keyword
@@ -180,3 +190,43 @@ class IntakeService:
 
         await self.db.refresh(session)
         return session
+
+    async def _continue_specification(
+        self, partial_specification: str, request_id: Optional[str] = None
+    ) -> str:
+        """Complete a specification that reached the provider output limit."""
+        specification = partial_specification
+
+        # Two follow-ups keep each individual request below the user's
+        # OpenRouter affordability limit while allowing longer specifications.
+        for _ in range(2):
+            continuation_prompt = (
+                "You are completing a truncated Engineering Specification.\n"
+                "Continue from the exact final character of the partial document in the user message.\n"
+                "Return only the missing continuation in Markdown. Do not repeat any prior heading, paragraph, table row, or list item.\n"
+                "Finish the section currently in progress, then complete every remaining section. Completeness takes priority over commentary."
+            )
+            continuation_request = ModelRouteRequest(
+                capability=Capability.GENERAL_REASONING,
+                messages=[
+                    ChatMessage(role="system", content=continuation_prompt),
+                    ChatMessage(
+                        role="user",
+                        content=f"PARTIAL SPECIFICATION:\n{specification}\n\nCONTINUE NOW:",
+                    ),
+                ],
+                temperature=0.1,
+                max_tokens=settings.intake_spec_max_tokens,
+            )
+            continuation_response = await self.model_router.route(
+                continuation_request, request_id=request_id
+            )
+            continuation = continuation_response.content.strip()
+            if not continuation:
+                break
+
+            specification = f"{specification}\n{continuation}"
+            if continuation_response.usage.get("finish_reason") != "length":
+                break
+
+        return specification

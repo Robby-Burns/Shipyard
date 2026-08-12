@@ -102,6 +102,40 @@ async def test_intake_uses_large_output_budget_for_spec_generation(
     assert captured_request.max_tokens == settings.intake_spec_max_tokens
 
 
+@pytest.mark.anyio
+async def test_intake_continues_a_truncated_specification(async_session: AsyncSession):
+    service = IntakeService(async_session)
+    requests = []
+
+    async def mock_route(route_request, request_id=None):
+        requests.append(route_request)
+        if len(requests) == 1:
+            return ModelRouteResponse(
+                id="first-completion",
+                capability=route_request.capability,
+                model_used="test-model",
+                content="VALIDATED\n# Engineering Specification\n\n## API\nPOST /scans/{",
+                usage={"finish_reason": "length"},
+            )
+        return ModelRouteResponse(
+            id="continuation-completion",
+            capability=route_request.capability,
+            model_used="test-model",
+            content="scan_id}\n\nReturns the scan status.",
+            usage={"finish_reason": "stop"},
+        )
+
+    service.model_router.route = mock_route
+    session = await service.create_session(title="Continuation Test")
+    result = await service.send_chat_message(session.id, "Approve and write the spec")
+
+    assert len(requests) == 2
+    assert result.specification.endswith("POST /scans/{\nscan_id}\n\nReturns the scan status.")
+
+    if os.path.exists(service.artifacts_dir):
+        shutil.rmtree(service.artifacts_dir)
+
+
 def test_intake_endpoints_full_flow(auth_headers, other_user_headers):
     # Setup database override for endpoint testing
     test_engine = create_async_engine("sqlite+aiosqlite:///:memory:")
