@@ -645,7 +645,35 @@ function startProjectPolling(projectId) {
 // Render Project Detail Pane
 function renderProjectDetails(project) {
     const container = document.getElementById("project-details-container");
+    if (!container) return;
+
+    // Check if we are updating the same project
+    const activeProjectIdInDOM = container.getAttribute("data-project-id");
+    const isSameProject = (activeProjectIdInDOM === project.id);
     
+    // Save UI state if it's the same project
+    let currentSubTab = "specification";
+    let selectedStepKey = null;
+    let scrollPos = 0;
+    const windowScrollPos = window.scrollY;
+
+    if (isSameProject) {
+        const activeTabButton = container.querySelector(".detail-tabs-bar .tab-link.active");
+        if (activeTabButton) {
+            currentSubTab = activeTabButton.getAttribute("data-subtab");
+        }
+        const selectedStep = container.querySelector(".timeline-step.selected-step");
+        if (selectedStep) {
+            selectedStepKey = selectedStep.getAttribute("data-step-key");
+        }
+        const contentArea = container.querySelector(".detail-content-area");
+        if (contentArea) {
+            scrollPos = contentArea.scrollTop;
+        }
+    } else {
+        container.setAttribute("data-project-id", project.id);
+    }
+
     // Human-friendly status labels
     const statusMap = {
         "created": "Initialized",
@@ -689,10 +717,10 @@ function renderProjectDetails(project) {
 
         <!-- Detail Tabs Bar -->
         <div class="detail-tabs-bar">
-            <button class="tab-link active" data-subtab="specification">Specification</button>
-            <button class="tab-link" data-subtab="status">Status</button>
-            <button class="tab-link" data-subtab="journal">Timeline</button>
-            <button class="tab-link" data-subtab="passport" ${project.status !== 'completed' ? 'disabled style="opacity:0.3;cursor:not-allowed;"' : ''}>Passport</button>
+            <button class="tab-link ${currentSubTab === 'specification' ? 'active' : ''}" data-subtab="specification">Specification</button>
+            <button class="tab-link ${currentSubTab === 'status' ? 'active' : ''}" data-subtab="status">Status</button>
+            <button class="tab-link ${currentSubTab === 'journal' ? 'active' : ''}" data-subtab="journal">Timeline</button>
+            <button class="tab-link ${currentSubTab === 'passport' ? 'active' : ''}" data-subtab="passport" ${project.status !== 'completed' ? 'disabled style="opacity:0.3;cursor:not-allowed;"' : ''}>Passport</button>
         </div>
 
         <!-- Detail Content Box -->
@@ -701,14 +729,14 @@ function renderProjectDetails(project) {
             <div id="project-alerts-box"></div>
 
             <!-- Tab Content: Spec -->
-            <div class="project-subtab active" id="subtab-specification">
+            <div class="project-subtab ${currentSubTab === 'specification' ? 'active' : ''}" id="subtab-specification">
                 <div class="spec-tab-content markdown-body">
                     ${marked.parse(project.specification)}
                 </div>
             </div>
 
             <!-- Tab Content: Status Checklist -->
-            <div class="project-subtab" id="subtab-status">
+            <div class="project-subtab ${currentSubTab === 'status' ? 'active' : ''}" id="subtab-status">
                 <div class="pipeline-subtab-layout">
                     <div class="vertical-timeline" id="workflow-timeline-steps">
                         <!-- Checklist elements injected dynamically -->
@@ -722,14 +750,14 @@ function renderProjectDetails(project) {
             </div>
 
             <!-- Tab Content: Timeline Logs -->
-            <div class="project-subtab" id="subtab-journal">
+            <div class="project-subtab ${currentSubTab === 'journal' ? 'active' : ''}" id="subtab-journal">
                 <div class="timeline-logs" id="project-journal-logs">
                     <!-- Specific logs injected dynamically -->
                 </div>
             </div>
 
             <!-- Tab Content: Completed Passport -->
-            <div class="project-subtab" id="subtab-passport">
+            <div class="project-subtab ${currentSubTab === 'passport' ? 'active' : ''}" id="subtab-passport">
                 <div class="completion-banner">
                     <div class="completion-icon-wrapper">
                         <i class="fa-solid fa-flag-checkered"></i>
@@ -791,15 +819,29 @@ function renderProjectDetails(project) {
 
             // Initialize timeline subtab detail pane if loading status tab
             if (subtabName === "status") {
-                renderWorkflowTimeline(project);
+                renderWorkflowTimeline(project, selectedStepKey);
             } else if (subtabName === "journal") {
                 renderProjectTimelineLogs(project);
             }
         });
     });
 
+    // Render current subtab contents immediately on update
+    if (currentSubTab === "status") {
+        renderWorkflowTimeline(project, selectedStepKey);
+    } else if (currentSubTab === "journal") {
+        renderProjectTimelineLogs(project);
+    }
+
     // Render alert banners
     renderProjectAlerts(project);
+
+    // Restore scroll position
+    const newContentArea = container.querySelector(".detail-content-area");
+    if (newContentArea) {
+        newContentArea.scrollTop = scrollPos;
+    }
+    window.scrollTo(window.scrollX, windowScrollPos);
 }
 
 // Render Alerts (Approvals or Escalations)
@@ -924,8 +966,9 @@ function renderProjectAlerts(project) {
 }
 
 // Render Workflow Vertical Timeline Checklist
-function renderWorkflowTimeline(project) {
+function renderWorkflowTimeline(project, preferredStepKey = null) {
     const listContainer = document.getElementById("workflow-timeline-steps");
+    if (!listContainer) return;
     listContainer.innerHTML = "";
 
     // Determine states of each role
@@ -990,6 +1033,7 @@ function renderWorkflowTimeline(project) {
         const stepStatus = getRoleStatus(step.key);
         const itemEl = document.createElement("div");
         itemEl.className = `timeline-step ${stepStatus}`;
+        itemEl.setAttribute("data-step-key", step.key);
         
         let displaySubtitle = "Waiting";
         if (stepStatus === "completed") {
@@ -1020,9 +1064,20 @@ function renderWorkflowTimeline(project) {
     });
 
     // Default select active or first step details
-    const activeStepNode = listContainer.querySelector(".timeline-step.active") || listContainer.querySelector(".timeline-step.completed") || listContainer.querySelector(".timeline-step");
-    if (activeStepNode) {
-        activeStepNode.click();
+    let targetStepNode = null;
+    if (preferredStepKey) {
+        targetStepNode = listContainer.querySelector(`.timeline-step[data-step-key="${preferredStepKey}"]`);
+    }
+    if (!targetStepNode) {
+        targetStepNode = listContainer.querySelector(".timeline-step.active") || 
+                         listContainer.querySelector(".timeline-step.completed") || 
+                         listContainer.querySelector(".timeline-step");
+    }
+    if (targetStepNode) {
+        targetStepNode.classList.add("selected-step");
+        const key = targetStepNode.getAttribute("data-step-key");
+        const status = getRoleStatus(key);
+        renderWorkflowRolePane(key, status, project);
     }
 }
 
