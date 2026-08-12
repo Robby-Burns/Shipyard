@@ -20,8 +20,8 @@ class AgentExecutionRequest(BaseModel):
     )
     task_input: str = Field(
         ...,
-        max_length=2000,
-        description="The task instruction for the agent to execute. Max 2000 characters.",
+        max_length=100000,
+        description="The task instruction for the agent to execute. Max 100000 characters.",
     )
     context: Optional[Dict[str, Any]] = Field(default_factory=dict)
     shared_knowledge_ids: Optional[List[str]] = None
