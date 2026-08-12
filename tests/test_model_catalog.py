@@ -41,6 +41,14 @@ def test_catalog_excludes_batch_only_models():
             "raw_metadata": {"description": "Only available through the Batch API."},
         }
     )
+    assert ModelCatalogService._is_interactive_model(
+        {
+            "model_id": "provider/completion-only",
+            "supported_parameters": ["max_completion_tokens"],
+            "architecture": {"output_modalities": ["text"]},
+            "raw_metadata": {"id": "provider/completion-only"},
+        }
+    )
 
 
 @pytest.mark.anyio
@@ -83,12 +91,23 @@ async def test_catalog_url_can_be_configured_independently(async_session, monkey
         settings, "openrouter_catalog_url", "https://catalog.example.test/v2"
     )
     requested_urls = []
+    requested_params = []
 
     async def mock_get(self, url, **kwargs):
         requested_urls.append(url)
+        requested_params.append(kwargs.get("params"))
         return httpx.Response(
             200,
-            json={"data": [{"id": "example/model", "pricing": {}}]},
+            json={
+                "data": [
+                    {
+                        "id": "example/model",
+                        "pricing": {},
+                        "supported_parameters": ["max_tokens", "temperature"],
+                        "architecture": {"output_modalities": ["text"]},
+                    }
+                ]
+            },
             request=httpx.Request("GET", url),
         )
 
@@ -96,3 +115,9 @@ async def test_catalog_url_can_be_configured_independently(async_session, monkey
     await ModelCatalogService(async_session).get_candidates(force_refresh=True)
 
     assert requested_urls == ["https://catalog.example.test/v2"]
+    assert requested_params == [
+        {
+            "output_modalities": "text",
+            "limit": 1000,
+        }
+    ]

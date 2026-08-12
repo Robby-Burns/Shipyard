@@ -1,4 +1,7 @@
+import math
 import time
+from dataclasses import dataclass
+from statistics import median
 from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
@@ -24,6 +27,20 @@ logger = structlog.get_logger()
 MODEL_ALIASES = {
     "anthropic/claude-3.5-sonnet": "google/gemini-2.5-flash",
 }
+
+
+@dataclass
+class OpenRouterUpstreamError(Exception):
+    status_code: int
+    message: str
+    error_type: Optional[str] = None
+    provider_code: Optional[str] = None
+    provider_name: Optional[str] = None
+    details: Optional[str] = None
+    retry_after: Optional[str] = None
+
+    def __str__(self) -> str:
+        return self.message
 
 
 class ModelRouterService:
@@ -53,13 +70,16 @@ class ModelRouterService:
         model_name = candidates[0]["model_id"]
         start_time = time.perf_counter()
 
-
         # Log routing attempt
         await self.activity_log_service.record(
             event_type="model_route_started",
             source="model_router",
             request_id=request_id,
-            payload={"capability": request.capability.value, "model": model_name},
+            payload={
+                "capability": request.capability.value,
+                "model": model_name,
+                "candidates": [candidate["model_id"] for candidate in candidates],
+            },
         )
 
         # Mock fallback for development/testing if API key is mock
@@ -79,12 +99,15 @@ class ModelRouterService:
             headers = {
                 "Authorization": f"Bearer {settings.openrouter_api_key}",
                 "Content-Type": "application/json",
+                "X-OpenRouter-Metadata": "enabled",
             }
             selected_candidate = next(
                 (candidate for candidate in candidates if candidate["model_id"] == model_name),
                 {},
             )
-            payload = self._build_upstream_payload(request, model_name, selected_candidate)
+            payload = self._build_upstream_payload(
+                request, model_name, candidates, selected_candidate
+            )
 
             # Normalize the configured URL so either the API root or the full
             # completion endpoint can be supplied without creating a bad path.
@@ -94,10 +117,6 @@ class ModelRouterService:
                 if configured_url.endswith("/chat/completions")
                 else f"{configured_url}/chat/completions"
             )
-            upstream_error_code = None
-            upstream_error_message = None
-            upstream_error_details = None
-
             try:
                 async with httpx.AsyncClient() as client:
                     res = await client.post(
@@ -107,51 +126,60 @@ class ModelRouterService:
                         timeout=30.0,
                     )
 
-                    # Preserve the provider's actionable error before
-                    # raise_for_status() turns it into a generic exception.
                     if res.is_error:
-                        try:
-                            upstream_payload = res.json()
-                        except ValueError:
-                            upstream_payload = None
+                        raise self._parse_http_error(res)
 
-                        if isinstance(upstream_payload, dict):
-                            upstream_error = upstream_payload.get(
-                                "error", upstream_payload
-                            )
-                            if isinstance(upstream_error, dict):
-                                upstream_error_code = upstream_error.get("code")
-                                upstream_error_message = upstream_error.get("message")
-                                metadata = upstream_error.get("metadata")
-                                if isinstance(metadata, dict):
-                                    upstream_error_details = (
-                                        metadata.get("raw")
-                                        or metadata.get("provider_error")
-                                        or metadata.get("provider_name")
-                                    )
-                            else:
-                                upstream_error_message = str(upstream_error)
-                        else:
-                            upstream_error_message = res.text[:500].strip() or None
-
-                    res.raise_for_status()
                     data = res.json()
+                    if not isinstance(data, dict):
+                        raise OpenRouterUpstreamError(
+                            status_code=502,
+                            message="OpenRouter returned an invalid completion payload.",
+                            error_type="provider_unavailable",
+                        )
+                    embedded_error = self._parse_embedded_error(data)
+                    if embedded_error:
+                        raise embedded_error
 
-                    choice = data["choices"][0]
-                    content = choice["message"]["content"]
-                    usage = dict(data.get("usage", {}))
+                    choices = data.get("choices") or []
+                    if not choices or not isinstance(choices[0], dict):
+                        raise OpenRouterUpstreamError(
+                            status_code=502,
+                            message="OpenRouter returned no completion choices.",
+                            error_type="provider_unavailable",
+                        )
+                    choice = choices[0]
+                    message = choice.get("message") or {}
+                    content = message.get("content")
+                    if not isinstance(content, str):
+                        raise OpenRouterUpstreamError(
+                            status_code=502,
+                            message="OpenRouter returned a completion without text content.",
+                            error_type="provider_unavailable",
+                        )
+                    usage = dict(data.get("usage") or {})
                     usage["finish_reason"] = choice.get("finish_reason")
+                    if data.get("provider"):
+                        usage["provider"] = data["provider"]
+                    if data.get("openrouter_metadata"):
+                        usage["openrouter_metadata"] = data["openrouter_metadata"]
+                    response_model = data.get("model") or model_name
 
                     response = ModelRouteResponse(
                         id=data.get("id", "completion-id"),
                         capability=request.capability,
-                        model_used=model_name,
+                        model_used=response_model,
                         content=content,
                         usage=usage,
                     )
             except httpx.TimeoutException as exc:
                 await self._record_outcome(
-                    request, request_id, model_name, {}, success=False, error=exc
+                    request,
+                    request_id,
+                    model_name,
+                    {},
+                    success=False,
+                    error=exc,
+                    latency_ms=(time.perf_counter() - start_time) * 1000,
                 )
                 await self.activity_log_service.record(
                     event_type="model_route_failed",
@@ -169,7 +197,13 @@ class ModelRouterService:
                 )
             except (httpx.ConnectError, httpx.NetworkError) as exc:
                 await self._record_outcome(
-                    request, request_id, model_name, {}, success=False, error=exc
+                    request,
+                    request_id,
+                    model_name,
+                    {},
+                    success=False,
+                    error=exc,
+                    latency_ms=(time.perf_counter() - start_time) * 1000,
                 )
                 await self.activity_log_service.record(
                     event_type="model_route_failed",
@@ -185,7 +219,7 @@ class ModelRouterService:
                     status_code=503,
                     detail="Service Unavailable – failed to connect to OpenRouter API",
                 )
-            except httpx.HTTPStatusError as exc:
+            except OpenRouterUpstreamError as exc:
                 await self._record_outcome(
                     request,
                     request_id,
@@ -193,32 +227,8 @@ class ModelRouterService:
                     {},
                     success=False,
                     error=exc,
+                    latency_ms=(time.perf_counter() - start_time) * 1000,
                 )
-                fallback_attempted = bool(
-                    request.metadata and request.metadata.get("_fallback_attempted")
-                )
-                if exc.response.status_code in {400, 402, 404} and not fallback_attempted:
-                    if exc.response.status_code == 404:
-                        await ModelCatalogService(self.db).mark_unavailable(model_name)
-                    refreshed_candidates = await self._select_candidates(
-                        request, force_refresh=exc.response.status_code == 404
-                    )
-                    fallback = next(
-                        (
-                            candidate["model_id"]
-                            for candidate in refreshed_candidates
-                            if candidate["model_id"] != model_name
-                        ),
-                        None,
-                    )
-                    if fallback:
-                        metadata = dict(request.metadata or {})
-                        metadata["model_override"] = fallback
-                        metadata["_fallback_attempted"] = True
-                        return await self.route(
-                            request.model_copy(update={"metadata": metadata}),
-                            request_id=request_id,
-                        )
                 await self.activity_log_service.record(
                     event_type="model_route_failed",
                     source="model_router",
@@ -227,37 +237,29 @@ class ModelRouterService:
                         "capability": request.capability.value,
                         "model": model_name,
                         "endpoint": completion_url,
-                        "upstream_status": exc.response.status_code,
-                        "upstream_code": upstream_error_code,
-                        "upstream_message": upstream_error_message,
-                        "upstream_details": upstream_error_details,
+                        "upstream_status": exc.status_code,
+                        "upstream_code": exc.provider_code,
+                        "error_type": exc.error_type,
+                        "upstream_message": exc.message,
+                        "upstream_details": exc.details,
+                        "provider_name": exc.provider_name,
+                        "retry_after": exc.retry_after,
                         "payload_parameters": sorted(
                             key for key in payload if key not in {"model", "messages"}
                         ),
                         "error": str(exc),
                     },
                 )
-                if upstream_error_message:
-                    raise HTTPException(
-                        status_code=502,
-                        detail=(
-                            "Bad Gateway - OpenRouter rejected the request "
-                            f"with status code {exc.response.status_code}: "
-                            f"{upstream_error_message}"
-                            + (
-                                f" ({upstream_error_details})"
-                                if upstream_error_details
-                                else ""
-                            )
-                        ),
-                    )
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"Bad Gateway – OpenRouter API returned status code {exc.response.status_code}",
-                )
+                raise self._to_http_exception(exc)
             except Exception as exc:
                 await self._record_outcome(
-                    request, request_id, model_name, {}, success=False, error=exc
+                    request,
+                    request_id,
+                    model_name,
+                    {},
+                    success=False,
+                    error=exc,
+                    latency_ms=(time.perf_counter() - start_time) * 1000,
                 )
                 await self.activity_log_service.record(
                     event_type="model_route_failed",
@@ -275,17 +277,24 @@ class ModelRouterService:
                 )
 
         # Record completion log
+        actual_model = response.model_used
         selected_candidate = next(
-            (candidate for candidate in candidates if candidate["model_id"] == model_name),
-            {},
+            (candidate for candidate in candidates if candidate["model_id"] == actual_model),
+            next(
+                (candidate for candidate in candidates if candidate["model_id"] == model_name),
+                {},
+            ),
         )
-        response.usage["estimated_cost"] = self._estimate_cost(
-            response.usage, selected_candidate
+        reported_cost = response.usage.get("cost")
+        response.usage["estimated_cost"] = (
+            float(reported_cost)
+            if reported_cost is not None
+            else self._estimate_cost(response.usage, selected_candidate)
         )
         await self._record_outcome(
             request,
             request_id,
-            model_name,
+            actual_model,
             response.usage,
             success=True,
             error=None,
@@ -297,7 +306,7 @@ class ModelRouterService:
             request_id=request_id,
             payload={
                 "capability": request.capability.value,
-                "model": model_name,
+                "model": actual_model,
                 "usage": response.usage,
             },
         )
@@ -308,14 +317,42 @@ class ModelRouterService:
     def _build_upstream_payload(
         request: ModelRouteRequest,
         model_name: str,
+        candidates: List[Dict[str, Any]],
         candidate: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """Send only parameters advertised by the selected catalog entry."""
+        """Build one OpenRouter request with provider and model failover."""
         supported = set(candidate.get("supported_parameters") or [])
-        payload: Dict[str, Any] = {
-            "model": model_name,
-            "messages": [message.model_dump() for message in request.messages],
+        token_parameter = None
+        if request.max_tokens is not None:
+            if not supported or "max_tokens" in supported:
+                token_parameter = "max_tokens"
+            elif "max_completion_tokens" in supported:
+                token_parameter = "max_completion_tokens"
+        provider_preferences: Dict[str, Any] = {
+            "allow_fallbacks": True,
+            "require_parameters": True,
         }
+        if settings.openrouter_provider_sort:
+            provider_preferences["sort"] = settings.openrouter_provider_sort
+
+        payload: Dict[str, Any] = {
+            "messages": [message.model_dump() for message in request.messages],
+            "provider": provider_preferences,
+        }
+        model_ids = [
+            item["model_id"]
+            for item in candidates
+            if item.get("model_id")
+            and (
+                not token_parameter
+                or not item.get("supported_parameters")
+                or token_parameter in item["supported_parameters"]
+            )
+        ]
+        if len(model_ids) > 1:
+            payload["models"] = model_ids
+        else:
+            payload["model"] = model_name
 
         # Older catalog records may not include supported_parameters. Preserve
         # the OpenAI-compatible defaults in that case.
@@ -323,13 +360,118 @@ class ModelRouterService:
             if request.temperature is not None:
                 payload["temperature"] = request.temperature
 
-        if request.max_tokens is not None:
-            if not supported or "max_tokens" in supported:
-                payload["max_tokens"] = request.max_tokens
-            elif "max_completion_tokens" in supported:
-                payload["max_completion_tokens"] = request.max_tokens
+        if request.max_tokens is not None and token_parameter:
+            payload[token_parameter] = request.max_tokens
 
         return payload
+
+    @staticmethod
+    def _parse_http_error(response: httpx.Response) -> OpenRouterUpstreamError:
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+        return ModelRouterService._parse_error_payload(
+            payload,
+            response.status_code,
+            response.headers.get("Retry-After"),
+            response.text[:500].strip() or None,
+        )
+
+    @staticmethod
+    def _parse_embedded_error(payload: Dict[str, Any]) -> Optional[OpenRouterUpstreamError]:
+        error = payload.get("error")
+        choices = payload.get("choices") or []
+        if not error and choices and isinstance(choices[0], dict):
+            error = choices[0].get("error")
+            if not error and choices[0].get("finish_reason") == "error":
+                error = {"message": "OpenRouter returned finish_reason=error."}
+        if not error:
+            return None
+        return ModelRouterService._parse_error_payload(error, 502, None, None)
+
+    @staticmethod
+    def _parse_error_payload(
+        payload: Any,
+        status_code: int,
+        retry_after: Optional[str],
+        fallback_message: Optional[str],
+    ) -> OpenRouterUpstreamError:
+        if isinstance(payload, dict):
+            error = payload.get("error", payload)
+        elif payload:
+            error = {"message": str(payload)}
+        else:
+            error = {}
+        if not isinstance(error, dict):
+            error = {"message": str(error)}
+        metadata = error.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        routing_metadata = (
+            payload.get("openrouter_metadata")
+            if isinstance(payload, dict) and isinstance(payload.get("openrouter_metadata"), dict)
+            else {}
+        )
+        raw_message = error.get("message") or fallback_message or "Unknown OpenRouter error"
+        raw_code = error.get("code")
+        detail = (
+            metadata.get("raw")
+            or metadata.get("provider_error")
+            or metadata.get("provider_code")
+        )
+        provider_code = metadata.get("provider_code")
+        if not provider_code and raw_code is not None and str(raw_code) != str(status_code):
+            provider_code = str(raw_code)
+        provider_name = metadata.get("provider_name")
+        if not provider_name:
+            attempts = routing_metadata.get("attempts") or []
+            if isinstance(attempts, list) and attempts:
+                provider_name = attempts[-1].get("provider") if isinstance(attempts[-1], dict) else None
+        if not provider_name:
+            endpoints = routing_metadata.get("endpoints") or {}
+            available = endpoints.get("available") if isinstance(endpoints, dict) else []
+            if isinstance(available, list):
+                selected = next(
+                    (entry for entry in available if isinstance(entry, dict) and entry.get("selected")),
+                    None,
+                )
+                provider_name = selected.get("provider") if selected else None
+        return OpenRouterUpstreamError(
+            status_code=status_code,
+            message=str(raw_message)[:1000],
+            error_type=(
+                metadata.get("error_type")
+                or error.get("error_type")
+                or error.get("type")
+            ),
+            provider_code=provider_code,
+            provider_name=provider_name,
+            details=str(detail)[:1000] if detail else None,
+            retry_after=retry_after,
+        )
+
+    @staticmethod
+    def _to_http_exception(error: OpenRouterUpstreamError) -> HTTPException:
+        if error.error_type == "payment_required" or error.status_code == 402:
+            status_code = 402
+        elif error.error_type == "rate_limit_exceeded" or error.status_code == 429:
+            status_code = 429
+        elif error.error_type == "timeout" or error.status_code == 408:
+            status_code = 504
+        elif error.status_code in {500, 502, 503, 504}:
+            status_code = 503
+        else:
+            status_code = 502
+        headers = {}
+        if error.retry_after and status_code in {429, 503}:
+            headers["Retry-After"] = error.retry_after
+        if 400 <= error.status_code < 500 and error.status_code not in {402, 408, 429}:
+            status_code = error.status_code
+        detail = f"OpenRouter error ({error.error_type or error.status_code}): {error.message}"
+        if error.provider_code:
+            detail += f" [provider_code={error.provider_code}]"
+        return HTTPException(status_code=status_code, detail=detail, headers=headers or None)
 
     async def _select_candidates(
         self, request: ModelRouteRequest, force_refresh: bool = False
@@ -356,10 +498,18 @@ class ModelRouterService:
         eligible = [
             candidate
             for candidate in eligible
-            if candidate.get("supported_parameters")
-            and (
-                "max_tokens" in candidate["supported_parameters"]
-            or "max_completion_tokens" in candidate["supported_parameters"]
+            if (
+                not candidate.get("raw_metadata")
+                or (
+                    candidate.get("supported_parameters")
+                    and set(candidate["supported_parameters"]).intersection(
+                        {"max_tokens", "max_completion_tokens"}
+                    )
+                    and (
+                        request.temperature is None
+                        or "temperature" in candidate["supported_parameters"]
+                    )
+                )
             )
         ]
         eligible = [
@@ -398,7 +548,9 @@ class ModelRouterService:
                     "output_price_per_million": 0.0,
                 }
             ]
-        return candidates[: max(1, settings.model_route_max_candidates)]
+        # OpenRouter accepts at most three model fallbacks in one request.
+        candidate_limit = min(3, max(1, settings.model_route_max_candidates))
+        return candidates[:candidate_limit]
 
     async def _score_candidate(
         self,
@@ -426,47 +578,59 @@ class ModelRouterService:
         ]
         if len(similar_outcomes) >= 2:
             outcomes = similar_outcomes
-        if outcomes:
-            observed = [row.quality_score for row in outcomes if row.quality_score is not None]
-            quality = sum(observed) / len(observed) if observed else quality_prior
-            reliability = sum(1 for row in outcomes if row.success) / len(outcomes)
-            latencies = [row.latency_ms for row in outcomes if row.latency_ms is not None]
-            latency_score = (
-                1.0 / (1.0 + (sum(latencies) / len(latencies)) / 3000.0)
-                if latencies
-                else 0.5
-            )
-        else:
-            quality = quality_prior
-            reliability = 0.5
-            latency_score = 0.5
+        observed = [row.quality_score for row in outcomes if row.quality_score is not None]
+        prior_weight = 4.0
+        quality = (
+            (quality_prior * prior_weight + sum(observed))
+            / (prior_weight + len(observed))
+        )
+        successes = sum(1 for row in outcomes if row.success)
+        reliability = (successes + 2.0) / (len(outcomes) + 4.0)
+        latencies = [row.latency_ms for row in outcomes if row.latency_ms is not None]
+        latency_score = (
+            1.0 / (1.0 + median(latencies) / 3000.0)
+            if latencies
+            else 0.5
+        )
+        exploration_bonus = min(0.08, 0.20 / math.sqrt(len(outcomes) + 1))
         estimated_cost = self._estimate_cost(
             {"prompt_tokens": prompt_tokens, "completion_tokens": max_tokens}, candidate
         )
-        cost_score = 1.0 / (1.0 + estimated_cost * 100.0)
+        cost_score = 1.0 / (1.0 + math.log1p(max(0.0, estimated_cost) * 1000.0))
         return (
-            quality * 0.50
-            + reliability * 0.20
-            + cost_score * 0.20
+            quality * 0.48
+            + reliability * 0.22
+            + cost_score * 0.18
             + latency_score * 0.10
+            + exploration_bonus * 0.02
         )
 
     @staticmethod
     def _quality_prior(candidate: Dict[str, Any]) -> float:
-        benchmarks = candidate.get("benchmarks") or {}
-        numeric = [
-            float(value) / 100 if value > 1 else float(value)
-            for value in benchmarks.values()
-            if isinstance(value, (int, float))
-        ] if isinstance(benchmarks, dict) else []
-        if numeric:
-            return max(0.1, min(1.0, sum(numeric) / len(numeric)))
-        model_id = candidate["model_id"].lower()
-        if any(marker in model_id for marker in ("pro", "opus", "sonnet", "gpt-4")):
-            return 0.75
-        if any(marker in model_id for marker in ("mini", "flash", "lite", "nano", "small")):
-            return 0.60
-        return 0.65
+        """Return a catalog prior without assuming anything from model names."""
+        values: List[float] = []
+
+        def collect(value: Any, key: str = "") -> None:
+            if isinstance(value, dict):
+                for child_key, child_value in value.items():
+                    collect(child_value, str(child_key).lower())
+            elif isinstance(value, (int, float)) and key in {
+                "win_rate",
+                "quality",
+                "score",
+                "overall",
+                "intelligence_index",
+            }:
+                normalized = float(value) / 100 if value > 1 else float(value)
+                values.append(max(0.0, min(1.0, normalized)))
+            elif isinstance(value, list):
+                for child in value:
+                    collect(child, key)
+
+        collect(candidate.get("benchmarks") or {})
+        if not values:
+            return 0.55
+        return sum(values) / len(values)
 
     @staticmethod
     def _estimate_cost(usage: Dict[str, Any], candidate: Dict[str, Any]) -> float:
@@ -487,8 +651,11 @@ class ModelRouterService:
         latency_ms: Optional[float] = None,
     ) -> None:
         quality_score = request.metadata.get("quality_score") if request.metadata else None
-        if quality_score is None and success:
-            quality_score = 0.45 if usage.get("finish_reason") == "length" else 0.6
+        error_code = None
+        if error:
+            error_code = getattr(error, "error_type", None) or getattr(
+                error, "provider_code", None
+            )
         self.db.add(
             ModelRoutingOutcome(
                 request_id=request_id,
@@ -501,7 +668,7 @@ class ModelRouterService:
                 success=success,
                 quality_score=quality_score,
                 finish_reason=usage.get("finish_reason"),
-                error_code=None,
+                error_code=error_code,
                 error_message=str(error)[:500] if error else None,
                 task_features=self._task_features(request),
             )

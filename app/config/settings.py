@@ -46,9 +46,13 @@ class Settings(BaseSettings):
     # default. Override with INTAKE_SPEC_MAX_TOKENS when more credits are
     # available.
     intake_spec_max_tokens: int = 3500
+    intake_spec_max_continuations: int = 1
     # Optional override for providers that expose their model catalog at a
     # different path than the OpenAI-compatible API root.
     openrouter_catalog_url: Optional[str] = None
+    # Leave unset to preserve OpenRouter's uptime-aware price/load balancing.
+    # Set to price, throughput, or latency only when that tradeoff is desired.
+    openrouter_provider_sort: Optional[str] = None
     model_catalog_ttl_minutes: int = 60
     model_route_max_candidates: int = 3
     model_emergency_fallbacks: list[str] = [

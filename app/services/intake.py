@@ -197,9 +197,9 @@ class IntakeService:
         """Complete a specification that reached the provider output limit."""
         specification = partial_specification
 
-        # Two follow-ups keep each individual request below the user's
-        # OpenRouter affordability limit while allowing longer specifications.
-        for _ in range(2):
+        # A single continuation keeps the total output allowance bounded while
+        # still recovering the common case where the first response is cut off.
+        for _ in range(settings.intake_spec_max_continuations):
             continuation_prompt = (
                 "You are completing a truncated Engineering Specification.\n"
                 "Continue from the exact final character of the partial document in the user message.\n"

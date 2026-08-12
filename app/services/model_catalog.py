@@ -63,7 +63,15 @@ class ModelCatalogService:
         url = settings.openrouter_catalog_url or f"{_api_root(settings.openrouter_base_url)}/models"
         headers = {"Authorization": f"Bearer {settings.openrouter_api_key}"}
         async with httpx.AsyncClient() as client:
-            response = await client.get(url, headers=headers, timeout=15.0)
+            response = await client.get(
+                url,
+                headers=headers,
+                params={
+                    "output_modalities": "text",
+                    "limit": 1000,
+                },
+                timeout=15.0,
+            )
             response.raise_for_status()
             payload = response.json()
 
@@ -153,6 +161,7 @@ class ModelCatalogService:
             "output_price_per_million": row.output_price_per_million or 0.0,
             "supported_parameters": row.supported_parameters or [],
             "benchmarks": row.benchmarks or {},
+            "architecture": (row.raw_metadata or {}).get("architecture") or {},
             "raw_metadata": row.raw_metadata or {},
         }
 
@@ -163,16 +172,30 @@ class ModelCatalogService:
         if model_id.endswith(":batch") or model_id.endswith("/batch") or model_id.endswith("-batch"):
             return False
 
-        raw = model.get("raw_metadata") or {}
+        raw_metadata = model.get("raw_metadata") or {}
+        architecture = model.get("architecture") or raw_metadata.get("architecture") or {}
+        output_modalities = architecture.get("output_modalities") or []
+        if output_modalities and "text" not in output_modalities:
+            return False
+        supported_parameters = set(model.get("supported_parameters") or [])
+        if raw_metadata and not supported_parameters.intersection(
+            {"max_tokens", "max_completion_tokens"}
+        ):
+            return False
+
+        raw = raw_metadata
         searchable = " ".join(
             str(raw.get(field) or "")
             for field in ("id", "canonical_slug", "name", "description", "endpoint_type")
         ).lower()
         batch_markers = (
-            "batch api",
             "batch-only",
             "batch only",
             "only available through batch",
+            "only available through the batch api",
+            "batch api only",
+            "available only through batch",
+            "only supports batch",
         )
         return not any(marker in searchable for marker in batch_markers)
 

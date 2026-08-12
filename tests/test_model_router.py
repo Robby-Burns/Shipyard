@@ -16,7 +16,11 @@ from app.schemas.model_router import (
     ModelRouteRequest,
 )
 from app.services.activity_log import ActivityLogService
-from app.services.model_router import MODEL_ALIASES, ModelRouterService
+from app.services.model_router import (
+    MODEL_ALIASES,
+    ModelRouterService,
+    OpenRouterUpstreamError,
+)
 
 client = TestClient(app)
 
@@ -75,12 +79,72 @@ def test_model_router_matches_catalog_supported_parameters():
     payload = ModelRouterService(None)._build_upstream_payload(
         request,
         "provider/model",
+        [
+            {"model_id": "provider/model"},
+            {"model_id": "provider/fallback"},
+        ],
         {"supported_parameters": ["max_completion_tokens"]},
     )
 
     assert payload["max_completion_tokens"] == 3500
     assert "max_tokens" not in payload
     assert "temperature" not in payload
+    assert payload["models"] == ["provider/model", "provider/fallback"]
+    assert payload["provider"]["require_parameters"] is True
+
+
+def test_model_router_parses_provider_error_metadata():
+    error = ModelRouterService._parse_error_payload(
+        {
+            "error": {
+                "code": 502,
+                "message": "Provider returned error",
+                "metadata": {
+                    "error_type": "provider_unavailable",
+                    "provider_code": "upstream_500",
+                },
+            }
+        },
+        502,
+        "3",
+        None,
+    )
+
+    assert isinstance(error, OpenRouterUpstreamError)
+    assert error.error_type == "provider_unavailable"
+    assert error.provider_code == "upstream_500"
+    assert error.retry_after == "3"
+
+
+def test_model_router_detects_embedded_completion_error():
+    error = ModelRouterService._parse_embedded_error(
+        {
+            "choices": [
+                {
+                    "finish_reason": "error",
+                    "error": {
+                        "message": "Provider failed during generation",
+                        "metadata": {"error_type": "provider_unavailable"},
+                    },
+                }
+            ]
+        }
+    )
+
+    assert error is not None
+    assert error.error_type == "provider_unavailable"
+
+
+def test_model_router_uses_catalog_evidence_without_name_heuristics():
+    neutral = ModelRouterService._quality_prior(
+        {"model_id": "vendor/flagship-model", "benchmarks": {}}
+    )
+    benchmarked = ModelRouterService._quality_prior(
+        {"model_id": "vendor/unknown-model", "benchmarks": {"win_rate": 80}}
+    )
+
+    assert neutral == 0.55
+    assert benchmarked == 0.8
 
 
 @pytest.mark.anyio
@@ -129,6 +193,7 @@ async def test_model_router_normalizes_base_url_and_surfaces_upstream_error(
     )
 
     requested_urls = []
+    requested_headers = []
 
     async def mock_get(self, url, **kwargs):
         return httpx.Response(
@@ -141,7 +206,8 @@ async def test_model_router_normalizes_base_url_and_surfaces_upstream_error(
                         "context_length": 1000000,
                         "pricing": {"prompt": "0.0000003", "completion": "0.0000025"},
                         "top_provider": {"max_completion_tokens": 8192},
-                        "supported_parameters": ["max_tokens"],
+                        "supported_parameters": ["max_tokens", "temperature"],
+                        "architecture": {"output_modalities": ["text"]},
                     }
                 ]
             },
@@ -150,6 +216,7 @@ async def test_model_router_normalizes_base_url_and_surfaces_upstream_error(
 
     async def mock_post(self, url, **kwargs):
         requested_urls.append(url)
+        requested_headers.append(kwargs.get("headers"))
         return httpx.Response(
             404,
             json={
@@ -173,8 +240,47 @@ async def test_model_router_normalizes_base_url_and_surfaces_upstream_error(
         await service.route(request, request_id="not-found-id")
 
     assert requested_urls == ["https://openrouter.ai/api/v1/chat/completions"]
-    assert exc_info.value.status_code == 502
+    assert requested_headers[0]["X-OpenRouter-Metadata"] == "enabled"
+    assert exc_info.value.status_code == 404
     assert "No such model" in exc_info.value.detail
+
+
+def test_model_router_maps_retryable_upstream_errors_and_retry_after():
+    error = OpenRouterUpstreamError(
+        status_code=429,
+        message="Too many requests",
+        error_type="rate_limit_exceeded",
+        retry_after="7",
+    )
+
+    mapped = ModelRouterService._to_http_exception(error)
+
+    assert mapped.status_code == 429
+    assert mapped.headers == {"Retry-After": "7"}
+
+
+def test_model_router_drops_incompatible_model_fallbacks():
+    request = ModelRouteRequest(
+        capability=Capability.GENERAL_REASONING,
+        messages=[ChatMessage(role="user", content="hello")],
+        max_tokens=3500,
+    )
+    payload = ModelRouterService(None)._build_upstream_payload(
+        request,
+        "provider/model",
+        [
+            {"model_id": "provider/model", "supported_parameters": ["max_tokens"]},
+            {
+                "model_id": "provider/completion-only",
+                "supported_parameters": ["max_completion_tokens"],
+            },
+        ],
+        {"supported_parameters": ["max_tokens"]},
+    )
+
+    assert payload["model"] == "provider/model"
+    assert "models" not in payload
+    assert payload["max_tokens"] == 3500
 
 
 def test_model_router_endpoint_unauthenticated():

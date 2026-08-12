@@ -26,6 +26,8 @@ async def get_infrastructure_status(
             "Candidate Count": settings.model_route_max_candidates,
             "Catalog Cache (minutes)": settings.model_catalog_ttl_minutes,
             "Emergency Fallbacks": ", ".join(settings.model_emergency_fallbacks),
+            "Provider Failover": "Enabled",
+            "Provider Sort": settings.openrouter_provider_sort or "OpenRouter default",
         },
         "Endpoint URL": settings.openrouter_base_url,
         "Catalog URL": settings.openrouter_catalog_url or "Derived from endpoint /models",
