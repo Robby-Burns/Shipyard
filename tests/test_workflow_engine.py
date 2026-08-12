@@ -152,3 +152,39 @@ def test_workflow_endpoints_authenticated():
         assert wf_list[0]["id"] == wf_id
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.anyio
+async def test_background_run_pipeline_error_handling(async_session: AsyncSession):
+    from app.api.v1.workflows import background_run_pipeline
+    from app.database.models.workflow import WorkflowRun
+    from sqlalchemy import select
+    from unittest.mock import patch, MagicMock
+
+    # 1. Create a workflow
+    service = WorkflowEngineService(async_session)
+    create_req = WorkflowCreateRequest(
+        title="Error Pipeline Test",
+        specification="This will trigger an error",
+    )
+    wf = await service.create_workflow(create_req, request_id="wf-error-req")
+
+    # 2. Mock AsyncSessionLocal and throw exception on run_full_pipeline
+    mock_session_cm = MagicMock()
+    mock_session_cm.__aenter__.return_value = async_session
+
+    with patch("app.api.v1.workflows.AsyncSessionLocal", return_value=mock_session_cm):
+        with patch.object(
+            WorkflowEngineService,
+            "run_full_pipeline",
+            side_effect=ValueError("Simulated pipeline failure"),
+        ):
+            await background_run_pipeline(wf.id, request_id="wf-error-req")
+
+    # 3. Verify status in database transitioned to FAILED and error was recorded
+    result = await async_session.execute(
+        select(WorkflowRun).where(WorkflowRun.id == wf.id)
+    )
+    updated_wf = result.scalar_one()
+    assert updated_wf.status == WorkflowStatus.FAILED
+    assert updated_wf.error_message == "Simulated pipeline failure"

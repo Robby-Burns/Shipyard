@@ -87,6 +87,24 @@ async def background_run_pipeline(
                 workflow_id=str(workflow_id),
                 error=str(e),
             )
+            # Update workflow status to FAILED in the DB so client/frontend stops polling
+            try:
+                from sqlalchemy import select
+                from app.database.models.workflow import WorkflowRun
+                result = await db.execute(
+                    select(WorkflowRun).where(WorkflowRun.id == workflow_id)
+                )
+                workflow = result.scalar_one_or_none()
+                if workflow:
+                    workflow.status = WorkflowStatus.FAILED
+                    workflow.error_message = str(e)
+                    await db.commit()
+            except Exception as db_err:
+                logger.error(
+                    "failed_to_mark_workflow_as_failed_in_db",
+                    workflow_id=str(workflow_id),
+                    error=str(db_err),
+                )
 
 
 @router.post("/{workflow_id}/run", response_model=WorkflowRunResponse)

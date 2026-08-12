@@ -1,7 +1,7 @@
 # Build Log for Shipyard Project
-
-**Generated on:** 2026-08-11T19:00:00-07:00
-
+ 
+**Generated on:** 2026-08-11T19:17:00-07:00
+ 
 ---
 
 ## CI Workflow Overview
@@ -75,6 +75,7 @@ The Dockerfile (`docker/Dockerfile`) uses a multi‑stage build that installs th
 *   **Manual Pipeline Controls (Pause, Kill, and Restart)**: Added Pause, Kill, and Force Restart actions to the details header. Pausing changes the workflow state to `escalated` and suspends the background loop cleanly upon current step completion. Killing changes the workflow state to `failed` and prompts the user for double-input confirmation (requiring typing "KILL"). Force Restart resets stuck builds to the `created` status and kicks off a fresh background run.
 *   **Resuming Workflows and Log Spam Mitigation**: Resolved a bug where resuming a paused/escalated workflow (which sets its status to an active status like `PLANNING`, `BUILDING`, etc.) failed to execute because the `/run` endpoint only allowed execution for workflows in the `CREATED` status, returning a `400 Bad Request`. This resulted in the workflow getting stuck, causing the frontend's 3-second polling interval to spam `GET /api/v1/workflows/{id}` requests indefinitely. Fixed by updating the `/run` endpoint validation to support all active/runnable statuses, adding a handler in `execute_step` for `WorkflowStatus.PLANNING` so it can execute correctly when resumed, and adding the missing `"architect": WorkflowStatus.DESIGNING` mapping in `resolve_escalation`'s `step_to_status` so architect escalations resume in `DESIGNING` status instead of defaulting to `PLANNING`.
 *   **Intake Prompt Transition & State Machine (Spec Writer vs Intake Coordinator)**: Integrated the Engineering Specification Writer prompt into `app/services/intake.py` to allow the intake service to dynamically switch to a spec writing mode when a validation keyword (e.g. `validate`, `confirm`, `proceed`, `write the spec`, `stop acting`) is detected or when the conversation exceeds 8 turns. Modified `app/services/model_router.py` to support the `"Specification Writer"` role, returning a validated spec mock directly. Wrote integration tests in `tests/test_intake.py` verifying both turn-based and keyword-based transitions.
+*   **Unhandled Exceptions in Background Workflow Execution**: Resolved an issue where background pipeline crashes (like validation errors or API timeouts running under FastAPI `BackgroundTasks`) leaked silently, leaving the workflow database status stuck in `PLANNING` or `BUILDING` indefinitely. This caused client frontends to poll `GET /api/v1/workflows/{id}` in an infinite loop. Fixed by wrapping the async queue thread logic inside `background_run_pipeline` (in `app/api/v1/workflows.py`) with a database update try-except block that captures any unhandled exceptions, transitions the database record status to `FAILED`, and records the exact error details in `error_message`. Added an integration test verifying database state transitions on failure.
 
 
 ---
