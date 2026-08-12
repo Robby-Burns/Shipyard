@@ -695,13 +695,23 @@ function renderProjectDetails(project) {
     container.innerHTML = `
         <!-- Header Info Bar -->
         <div class="project-detail-header">
-            <div class="detail-header-top" style="display:flex; align-items:center; gap:0.75rem;">
+            <div class="detail-header-top" style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
                 <span class="detail-title">${project.title}</span>
                 <span class="badge-status ${project.status}">${statusMap[project.status] || project.status}</span>
                 ${(project.status !== 'completed' && project.status !== 'failed') ? `
-                    <button class="btn btn-secondary" id="btn-force-restart-build" style="margin-left:auto; font-size:0.78rem; padding:0.35rem 0.7rem; display:flex; align-items:center; gap:0.35rem; background:rgba(255,255,255,0.05); border:1px solid hsl(var(--border-color)); color:hsl(var(--text-muted)); height:fit-content; margin-top:0; border-radius:6px; cursor:pointer;">
-                        <i class="fa-solid fa-rotate-left"></i> Restart Build
-                    </button>
+                    <div style="display:flex; gap:0.5rem; margin-left:auto; align-items:center;">
+                        ${['planning', 'designing', 'building', 'reviewing', 'testing'].includes(project.status) ? `
+                            <button class="btn btn-secondary" id="btn-pause-build" style="font-size:0.78rem; padding:0.35rem 0.7rem; display:flex; align-items:center; gap:0.35rem; background:rgba(255,255,255,0.05); border:1px solid hsl(var(--border-color)); color:hsl(var(--text-muted)); height:fit-content; margin-top:0; border-radius:6px; cursor:pointer;">
+                                <i class="fa-solid fa-pause"></i> Pause Build
+                            </button>
+                            <button class="btn btn-danger" id="btn-kill-build" style="font-size:0.78rem; padding:0.35rem 0.7rem; display:flex; align-items:center; gap:0.35rem; height:fit-content; margin-top:0; border-radius:6px; cursor:pointer;">
+                                <i class="fa-solid fa-ban"></i> Kill Build
+                            </button>
+                        ` : ''}
+                        <button class="btn btn-secondary" id="btn-force-restart-build" style="font-size:0.78rem; padding:0.35rem 0.7rem; display:flex; align-items:center; gap:0.35rem; background:rgba(255,255,255,0.05); border:1px solid hsl(var(--border-color)); color:hsl(var(--text-muted)); height:fit-content; margin-top:0; border-radius:6px; cursor:pointer;">
+                            <i class="fa-solid fa-rotate-left"></i> Restart Build
+                        </button>
+                    </div>
                 ` : ''}
             </div>
             <div class="detail-info-bar">
@@ -868,6 +878,80 @@ function renderProjectDetails(project) {
                 console.error(e);
                 forceRestartBtn.disabled = false;
                 forceRestartBtn.innerHTML = '<i class="fa-solid fa-rotate-left"></i> Restart Build';
+            }
+        });
+    }
+
+    // Hook click listener for the pause button
+    const pauseBtn = container.querySelector("#btn-pause-build");
+    if (pauseBtn) {
+        pauseBtn.addEventListener("click", async () => {
+            if (!confirm("Are you sure you want to pause this build? The current executing step will complete, and then the build will pause.")) {
+                return;
+            }
+            pauseBtn.disabled = true;
+            pauseBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Pausing...';
+            try {
+                const res = await fetch(`${API_BASE}/api/v1/workflows/${project.id}/pause`, {
+                    method: "POST",
+                    headers: getHeaders()
+                });
+                if (res.ok) {
+                    alert("Build successfully paused!");
+                    loadProjects();
+                    const updated = await res.json();
+                    renderProjectDetails(updated);
+                } else {
+                    const err = await res.json();
+                    alert(`Failed to pause build: ${err.detail}`);
+                    pauseBtn.disabled = false;
+                    pauseBtn.innerHTML = '<i class="fa-solid fa-pause"></i> Pause Build';
+                }
+            } catch (e) {
+                console.error(e);
+                pauseBtn.disabled = false;
+                pauseBtn.innerHTML = '<i class="fa-solid fa-pause"></i> Pause Build';
+            }
+        });
+    }
+
+    // Hook click listener for the kill/terminate button with double confirmation
+    const killBtn = container.querySelector("#btn-kill-build");
+    if (killBtn) {
+        killBtn.addEventListener("click", async () => {
+            // First prompt confirmation
+            if (!confirm("Are you sure you want to kill this build? This will terminate the run immediately.")) {
+                return;
+            }
+            // Double validation input prompt
+            const confirmation = prompt("To confirm termination, please type 'KILL' in all caps below:");
+            if (confirmation !== "KILL") {
+                alert("Termination cancelled (confirmation input did not match 'KILL').");
+                return;
+            }
+
+            killBtn.disabled = true;
+            killBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Terminating...';
+            try {
+                const res = await fetch(`${API_BASE}/api/v1/workflows/${project.id}/terminate`, {
+                    method: "POST",
+                    headers: getHeaders()
+                });
+                if (res.ok) {
+                    alert("Build successfully terminated.");
+                    loadProjects();
+                    const updated = await res.json();
+                    renderProjectDetails(updated);
+                } else {
+                    const err = await res.json();
+                    alert(`Failed to terminate build: ${err.detail}`);
+                    killBtn.disabled = false;
+                    killBtn.innerHTML = '<i class="fa-solid fa-ban"></i> Kill Build';
+                }
+            } catch (e) {
+                console.error(e);
+                killBtn.disabled = false;
+                killBtn.innerHTML = '<i class="fa-solid fa-ban"></i> Kill Build';
             }
         });
     }

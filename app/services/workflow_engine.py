@@ -330,13 +330,33 @@ class WorkflowEngineService:
         self, workflow_id: uuid.UUID, request_id: Optional[str] = None
     ) -> WorkflowRun:
         """Run workflow continuously through all automated steps until AWAITING_APPROVAL gate."""
-        workflow = await self.execute_step(workflow_id, request_id)
-        while workflow.status in [
-            WorkflowStatus.DESIGNING,
-            WorkflowStatus.BUILDING,
-            WorkflowStatus.REVIEWING,
-            WorkflowStatus.TESTING,
+        # 1. Fetch initial status from DB
+        result = await self.db.execute(
+            select(WorkflowRun).where(WorkflowRun.id == workflow_id)
+        )
+        workflow = result.scalar_one_or_none()
+        if not workflow or workflow.status in [
+            WorkflowStatus.ESCALATED,
+            WorkflowStatus.FAILED,
+            WorkflowStatus.COMPLETED,
+            WorkflowStatus.AWAITING_APPROVAL,
         ]:
+            return workflow
+
+        # 2. Run the first step
+        workflow = await self.execute_step(workflow_id, request_id)
+
+        # 3. Execution loop
+        while True:
+            # Refresh workflow state from DB to check for pause/terminate signals
+            await self.db.refresh(workflow)
+            if workflow.status not in [
+                WorkflowStatus.DESIGNING,
+                WorkflowStatus.BUILDING,
+                WorkflowStatus.REVIEWING,
+                WorkflowStatus.TESTING,
+            ]:
+                break
             workflow = await self.execute_step(workflow_id, request_id)
         return workflow
 

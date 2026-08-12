@@ -199,3 +199,73 @@ async def approve_workflow(
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@router.post("/{workflow_id}/pause", response_model=WorkflowRunResponse)
+async def pause_workflow(
+    workflow_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    service = WorkflowEngineService(db)
+    wf = await service.get_workflow(workflow_id)
+    if not wf:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Workflow run not found"
+        )
+    if wf.owner_id != user.get("sub"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden"
+        )
+    
+    # Can only pause if it is actively running
+    if wf.status not in [
+        WorkflowStatus.PLANNING,
+        WorkflowStatus.DESIGNING,
+        WorkflowStatus.BUILDING,
+        WorkflowStatus.REVIEWING,
+        WorkflowStatus.TESTING,
+    ]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot pause workflow run in status '{wf.status.value}'"
+        )
+
+    wf.status = WorkflowStatus.ESCALATED
+    wf.error_message = "Workflow execution paused by user."
+    await db.commit()
+    await db.refresh(wf)
+    return wf
+
+
+@router.post("/{workflow_id}/terminate", response_model=WorkflowRunResponse)
+async def terminate_workflow(
+    workflow_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    service = WorkflowEngineService(db)
+    wf = await service.get_workflow(workflow_id)
+    if not wf:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Workflow run not found"
+        )
+    if wf.owner_id != user.get("sub"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden"
+        )
+
+    # Can only terminate if not already in final state
+    if wf.status in [WorkflowStatus.COMPLETED, WorkflowStatus.FAILED]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Workflow run is already in final state: '{wf.status.value}'"
+        )
+
+    wf.status = WorkflowStatus.FAILED
+    wf.error_message = "Workflow execution terminated by user."
+    await db.commit()
+    await db.refresh(wf)
+    return wf
