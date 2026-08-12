@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     # Model Router settings
     openrouter_api_key: str = "mock-key"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    # Keep intake specifications within the affordable OpenRouter budget by
+    # default. Override with INTAKE_SPEC_MAX_TOKENS when more credits are
+    # available.
+    intake_spec_max_tokens: int = 3500
 
     # Capability mappings
     default_model_architecture: str = "anthropic/claude-3.5-sonnet"

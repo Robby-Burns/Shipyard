@@ -99,7 +99,7 @@ async def test_intake_uses_large_output_budget_for_spec_generation(
     await service.send_chat_message(session.id, "I want to build a service")
 
     assert captured_request is not None
-    assert captured_request.max_tokens == 8000
+    assert captured_request.max_tokens == settings.intake_spec_max_tokens
 
 
 def test_intake_endpoints_full_flow(auth_headers, other_user_headers):

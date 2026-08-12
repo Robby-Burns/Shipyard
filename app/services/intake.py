@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
+from app.config.settings import settings
 from app.database.models.intake import IntakeSession
 from app.schemas.model_router import Capability, ChatMessage, ModelRouteRequest
 from app.services.model_router import ModelRouterService
@@ -88,6 +89,7 @@ class IntakeService:
                 "Continue the conversation normally: answer questions, explain decisions, and incorporate requested changes.\n"
                 "If the user requests a change to the specification, output 'VALIDATED' on the very first line, followed by the complete updated Engineering Specification in Markdown.\n"
                 "If the user is only asking a question or discussing the design, respond conversationally without the VALIDATED marker.\n\n"
+                "When revising the specification, preserve useful content, update only what is affected, and remove repetition. Use concise technical writing, compact bullets, and small tables; do not add filler or full source code.\n\n"
                 "CURRENT ENGINEERING SPECIFICATION:\n"
                 f"{session.specification}"
             )
@@ -106,6 +108,9 @@ class IntakeService:
                 "- Execution Limits: 180s global boundary, 20s individual adapter timeouts\n"
                 "- Gates: Gate 1 (outbound only) and Gate 2 (inbound + outbound)\n\n"
                 "For anything genuinely unspecified, make a reasonable engineering default and label it clearly as an implementation choice or assumption.\n\n"
+                "Use concise technical writing. Target roughly 1,200-1,800 words.\n"
+                "Capture decisions, requirements, interfaces, constraints, risks, and acceptance criteria; do not repeat the user's background, add filler, include full source code, or restate the same requirement in multiple sections.\n"
+                "Prefer compact bullets and small tables where they improve clarity.\n\n"
                 "Output 'VALIDATED' on the very first line, followed by the complete Engineering Specification in Markdown.\n"
                 "Write every section completely. Do not stop mid-list, mid-table, or mid-section."
             )
@@ -133,9 +138,9 @@ class IntakeService:
             capability=Capability.GENERAL_REASONING,
             messages=llm_messages,
             temperature=0.2,
-            # Specifications are substantially longer than ordinary chat
-            # responses; the shared 2,000-token default truncates them.
-            max_tokens=8000,
+            # Specifications need more room than ordinary chat, but should
+            # remain compact enough for lower-credit OpenRouter accounts.
+            max_tokens=settings.intake_spec_max_tokens,
         )
         route_res = await self.model_router.route(route_req, request_id=request_id)
         llm_content = route_res.content.strip()
