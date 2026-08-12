@@ -119,8 +119,15 @@ async def run_full_pipeline(
         await db.commit()
         await db.refresh(wf)
 
-    # Prevent concurrent execution or starting a run from anything other than CREATED status
-    if wf.status != WorkflowStatus.CREATED:
+    # Prevent execution from terminal, awaiting approval, or escalated statuses
+    if wf.status not in [
+        WorkflowStatus.CREATED,
+        WorkflowStatus.PLANNING,
+        WorkflowStatus.DESIGNING,
+        WorkflowStatus.BUILDING,
+        WorkflowStatus.REVIEWING,
+        WorkflowStatus.TESTING,
+    ]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Workflow run {workflow_id} cannot execute step in status '{wf.status.value}'"

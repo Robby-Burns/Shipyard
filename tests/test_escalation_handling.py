@@ -81,7 +81,7 @@ async def test_workflow_escalation_and_resolution_flow(
         wf.id, res_req, request_id="esc-req-1"
     )
 
-    assert wf_resolved.status in [WorkflowStatus.PLANNING, WorkflowStatus.BUILDING]
+    assert wf_resolved.status in [WorkflowStatus.PLANNING, WorkflowStatus.DESIGNING, WorkflowStatus.BUILDING]
     assert wf_resolved.error_message is None
 
     # Verify ActivityLog entries
@@ -158,5 +158,37 @@ def test_escalation_and_resolution_api_endpoints():
         )
         assert res_res.status_code == 200
         assert res_res.json()["status"] == "created"
+
+        # 5. Escalate again
+        esc_res2 = client.post(
+            f"/api/v1/workflows/{wf_id}/escalate",
+            headers=headers,
+            json={
+                "reason": "Developer request clarification on specifications",
+                "escalated_by": "builder_agent",
+            },
+        )
+        assert esc_res2.status_code == 200
+        assert esc_res2.json()["status"] == "escalated"
+
+        # 6. Resolve via API (resume action)
+        res_res2 = client.post(
+            f"/api/v1/workflows/{wf_id}/resolve",
+            headers=headers,
+            json={
+                "resolved_by": "manager",
+                "resolution_notes": "Clarified specifications, please resume",
+                "action": "resume",
+            },
+        )
+        assert res_res2.status_code == 200
+        assert res_res2.json()["status"] in ["planning", "building"]
+
+        # 7. Run pipeline via /run after resume (should succeed 200 instead of 400)
+        run_res2 = client.post(
+            f"/api/v1/workflows/{wf_id}/run", headers=headers
+        )
+        assert run_res2.status_code == 200
+        assert run_res2.json()["status"] == "awaiting_approval"
     finally:
         app.dependency_overrides.clear()

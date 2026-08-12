@@ -80,8 +80,8 @@ class WorkflowEngineService:
                 f"Workflow run {workflow_id} cannot execute step in status '{workflow.status.value}'"
             )
 
-        # Step 1: CREATED -> PLANNING (Coordinator)
-        if workflow.status == WorkflowStatus.CREATED:
+        # Step 1: CREATED or PLANNING -> PLANNING (Coordinator)
+        if workflow.status in [WorkflowStatus.CREATED, WorkflowStatus.PLANNING]:
             workflow.status = WorkflowStatus.PLANNING
             workflow.current_step = "coordinator_planning"
             specification = workflow.specification
@@ -421,6 +421,7 @@ class WorkflowEngineService:
                 "reviewer": WorkflowStatus.REVIEWING,
                 "qa": WorkflowStatus.TESTING,
                 "coordinator": WorkflowStatus.PLANNING,
+                "architect": WorkflowStatus.DESIGNING,
             }
             # Extract the component before the first '_' if present
             step_key = workflow.current_step.split('_')[0] if workflow.current_step else ""
