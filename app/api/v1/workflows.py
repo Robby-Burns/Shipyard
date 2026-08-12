@@ -134,6 +134,8 @@ async def run_full_pipeline(
         wf.current_step = "created"
         wf.artifacts = {}
         wf.error_message = None
+        wf.approved_by = None
+        wf.approved_at = None
         await db.commit()
         await db.refresh(wf)
 

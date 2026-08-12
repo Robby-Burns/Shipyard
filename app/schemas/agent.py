@@ -1,3 +1,4 @@
+import uuid
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
@@ -20,8 +21,12 @@ class AgentExecutionRequest(BaseModel):
     )
     task_input: str = Field(
         ...,
-        max_length=100000,
-        description="The task instruction for the agent to execute. Max 100000 characters.",
+        max_length=2000,
+        description="The task instruction for the agent to execute. Max 2000 characters.",
+    )
+    specification_ref: Optional[uuid.UUID] = Field(
+        None,
+        description="Optional UUID reference to a workflow run to resolve the full specification.",
     )
     context: Optional[Dict[str, Any]] = Field(default_factory=dict)
     shared_knowledge_ids: Optional[List[str]] = None

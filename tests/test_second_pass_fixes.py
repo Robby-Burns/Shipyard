@@ -87,8 +87,8 @@ async def test_rate_limiter_spend_cap_enforced():
 # ==========================================
 
 def test_agent_payload_max_length():
-    # Enforce task_input max length rejection (> 100000 chars)
-    oversized_input = "a" * 100001
+    # Enforce task_input max length rejection (> 2000 chars)
+    oversized_input = "a" * 2001
     with pytest.raises(ValidationError):
         AgentExecutionRequest(
             task_input=oversized_input,

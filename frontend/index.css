@@ -1127,6 +1127,11 @@ h1 {
     border: 1px solid rgba(244, 63, 94, 0.25);
 }
 
+.action-card.terminated {
+    background-color: rgba(244, 63, 94, 0.08);
+    border: 1px solid rgba(244, 63, 94, 0.25);
+}
+
 .action-card.approval {
     background-color: rgba(245, 158, 11, 0.08);
     border: 1px solid rgba(245, 158, 11, 0.25);
@@ -1143,6 +1148,7 @@ h1 {
 }
 
 .escalation .action-card-header i { color: hsl(var(--status-red)); }
+.terminated .action-card-header i { color: hsl(var(--status-red)); }
 .approval .action-card-header i { color: hsl(var(--status-yellow)); }
 
 .action-card-title {

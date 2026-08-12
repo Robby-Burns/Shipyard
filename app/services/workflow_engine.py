@@ -91,7 +91,9 @@ class WorkflowEngineService:
             agent = CoordinatorAgent(self.db)
             exec_res = await agent.run(
                 AgentExecutionRequest(
-                    role=agent.role, task_input=specification
+                    role=agent.role,
+                    task_input="Breakdown & Planning",
+                    specification_ref=workflow_id,
                 ),
                 request_id=request_id,
             )
@@ -118,7 +120,8 @@ class WorkflowEngineService:
             exec_res = await agent.run(
                 AgentExecutionRequest(
                     role=agent.role,
-                    task_input=specification,
+                    task_input="System Blueprints & ADRs",
+                    specification_ref=workflow_id,
                     context={
                         "build_plan": build_plan,
                         "workflow_id": str(workflow_id),
@@ -152,7 +155,8 @@ class WorkflowEngineService:
             exec_res = await agent.run(
                 AgentExecutionRequest(
                     role=agent.role,
-                    task_input=specification,
+                    task_input="Feature Implementation",
+                    specification_ref=workflow_id,
                     context={
                         "build_plan": build_plan,
                         "architecture_doc": architecture_doc,

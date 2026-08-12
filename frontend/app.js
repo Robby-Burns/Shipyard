@@ -698,7 +698,7 @@ function renderProjectDetails(project) {
             <div class="detail-header-top" style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
                 <span class="detail-title">${project.title}</span>
                 <span class="badge-status ${project.status}">${statusMap[project.status] || project.status}</span>
-                ${(project.status !== 'completed' && project.status !== 'failed') ? `
+                ${project.status !== 'completed' ? `
                     <div style="display:flex; gap:0.5rem; margin-left:auto; align-items:center;">
                         ${['planning', 'designing', 'building', 'reviewing', 'testing'].includes(project.status) ? `
                             <button class="btn btn-secondary" id="btn-pause-build" style="font-size:0.78rem; padding:0.35rem 0.7rem; display:flex; align-items:center; gap:0.35rem; background:rgba(255,255,255,0.05); border:1px solid hsl(var(--border-color)); color:hsl(var(--text-muted)); height:fit-content; margin-top:0; border-radius:6px; cursor:pointer;">
@@ -1084,6 +1084,59 @@ function renderProjectAlerts(project) {
         card.querySelector("#btn-resolve-restart").addEventListener("click", () => sendResolution("restart"));
         card.querySelector("#btn-resolve-terminate").addEventListener("click", () => sendResolution("terminate"));
 
+        alertsBox.appendChild(card);
+    } else if (project.status === "failed") {
+        const card = document.createElement("div");
+        card.className = "action-card terminated";
+        
+        const explanation = project.error_message || "The engineering pipeline was terminated due to an error.";
+        
+        card.innerHTML = `
+            <div class="action-card-header">
+                <i class="fa-solid fa-circle-xmark"></i>
+                <span class="action-card-title">Execution Terminated</span>
+            </div>
+            <div class="action-card-desc">
+                <strong>Blocker details:</strong> ${explanation}<br><br>
+                This run is currently marked as terminated. You can clear the failed state and restart the execution pipeline from the beginning.
+            </div>
+            <div class="action-form">
+                <div class="form-group">
+                    <button class="btn btn-danger" id="btn-alert-restart-build" style="border-radius: 6px; padding: 0.5rem 1rem; font-size: 0.85rem;">
+                        <i class="fa-solid fa-rotate-left"></i> Restart Build
+                    </button>
+                </div>
+            </div>
+        `;
+        
+        card.querySelector("#btn-alert-restart-build").addEventListener("click", async () => {
+            const forceRestartBtn = document.getElementById("btn-force-restart-build");
+            if (forceRestartBtn) {
+                forceRestartBtn.click();
+            } else {
+                if (!confirm("Are you sure you want to force restart this build from the beginning? This will clear all generated progress and start a fresh run.")) {
+                    return;
+                }
+                try {
+                    const res = await fetch(`${API_BASE}/api/v1/workflows/${project.id}/run?force=true`, {
+                        method: "POST",
+                        headers: getHeaders()
+                    });
+                    if (res.ok) {
+                        alert("Build successfully restarted!");
+                        loadProjects();
+                        const updated = await res.json();
+                        renderProjectDetails(updated);
+                    } else {
+                        const err = await res.json();
+                        alert(`Failed to restart build: ${err.detail}`);
+                    }
+                } catch (e) {
+                    console.error(e);
+                }
+            }
+        });
+        
         alertsBox.appendChild(card);
     }
 }
