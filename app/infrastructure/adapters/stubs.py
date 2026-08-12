@@ -67,11 +67,14 @@ class RepositoryAdapter(RepositoryInterface):
                 raise ValueError("Security violation: Repository URL must use the secure https:// scheme.")
 
         # 2. Execution Branching
-        is_mock = (
-            not repo_url or 
-            "github.com/shipyard-ai/workflow-run" in repo_url or 
-            not token
-        )
+        # The workflow-run repository remains an explicit local/test stub.
+        # A user-provided repository must never silently become a fake commit
+        # just because Railway is missing its server-side GitHub token.
+        is_mock = "github.com/shipyard-ai/workflow-run" in (repo_url or "")
+        if not is_mock and not token:
+            raise RuntimeError(
+                "GitHub push is not configured. Add GIT_TOKEN to the server environment."
+            )
         
         if is_mock:
             # Mock Stub Commit Hash Generation

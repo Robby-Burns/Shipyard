@@ -84,8 +84,15 @@
                     <div>
                         <h1>New Engineering Request</h1>
                     </div>
-                    <div class="session-actions" id="intake-actions-container" style="display: none; align-items: center; gap: 12px;">
-                        <input type="text" id="intake-repo-url" placeholder="Git Repository URL (Optional, e.g. https://...)" style="width: 280px; padding: 8px 12px; background: var(--bg-card); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 6px; font-size: 0.9rem; outline: none; transition: border-color 0.2s;" />
+                    <div class="session-actions" id="intake-actions-container" style="display: none;">
+                        <div class="repo-destination">
+                            <label for="intake-repo-url">GitHub repository <span>Required before building</span></label>
+                            <div class="repo-input-wrap">
+                                <i class="fa-brands fa-github"></i>
+                                <input type="url" id="intake-repo-url" required placeholder="https://github.com/owner/repository" autocomplete="off" />
+                            </div>
+                            <small>Shipyard will commit the generated code here after you approve the specification.</small>
+                        </div>
                         <button class="btn btn-primary btn-glow" id="start-project-btn">
                             <i class="fa-solid fa-circle-check"></i> Approve & Start Engineering
                         </button>

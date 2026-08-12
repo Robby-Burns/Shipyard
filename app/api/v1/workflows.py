@@ -139,14 +139,21 @@ async def run_full_pipeline(
         )
 
     # If force=True, reset the workflow state to CREATED first so it can execute
+    repository_url = wf.artifacts.get("repository_url")
     if force:
         wf.status = WorkflowStatus.CREATED
         wf.current_step = "created"
-        wf.artifacts = {}
+        wf.artifacts = {"repository_url": repository_url} if repository_url else {}
         wf.error_message = None
         wf.approved_by = None
         wf.approved_at = None
         await db.commit()
+
+    if settings.app_env == "production" and not repository_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A GitHub repository is required before engineering can start.",
+        )
 
     # Prevent execution from terminal, awaiting approval, or escalated statuses
     if wf.status not in [

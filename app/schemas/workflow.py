@@ -2,8 +2,9 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, Optional
 import uuid
+from urllib.parse import urlparse
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class WorkflowStatus(str, Enum):
@@ -24,6 +25,27 @@ class WorkflowCreateRequest(BaseModel):
     specification: str
     metadata_json: Optional[Dict[str, Any]] = None
     repository_url: Optional[str] = None
+
+    @field_validator("repository_url")
+    @classmethod
+    def validate_repository_url(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+
+        value = value.strip().rstrip("/")
+        parsed = urlparse(value)
+        path_parts = [part for part in parsed.path.split("/") if part]
+        if (
+            parsed.scheme != "https"
+            or parsed.netloc.lower() not in {"github.com", "www.github.com"}
+            or len(path_parts) != 2
+            or any(part in {".", ".."} for part in path_parts)
+        ):
+            raise ValueError(
+                "repository_url must be a secure GitHub repository URL, "
+                "for example https://github.com/owner/repository"
+            )
+        return value
 
 
 class WorkflowApprovalRequest(BaseModel):

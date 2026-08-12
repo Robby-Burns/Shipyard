@@ -40,7 +40,9 @@ async def test_repository_adapter_stub_mode():
     assert await adapter.validate_config() is True
 
     files = {"main.py": "print('hello')"}
-    commit_hash = await adapter.commit_code("https://github.com/org/repo", files, "feat: init")
+    commit_hash = await adapter.commit_code(
+        "https://github.com/shipyard-ai/workflow-run", files, "feat: init"
+    )
     assert isinstance(commit_hash, str)
     assert len(commit_hash) == 40
 

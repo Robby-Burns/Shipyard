@@ -173,6 +173,7 @@ function setupInputHandlers() {
 
     // Setup promote button from Intake to Workflow
     document.getElementById("start-project-btn").addEventListener("click", promoteIntakeToProject);
+    document.getElementById("intake-repo-url").addEventListener("input", updateStartProjectButton);
 
     // Setup global search / filters in journal
     document.getElementById("journal-search").addEventListener("input", filterJournal);
@@ -385,6 +386,7 @@ function updateSpecificationPreview(specificationContent, status) {
         actionsContainer.style.display = "none";
         chatInput.placeholder = "Describe your product requirements, stack constraints, or paste documentation...";
     }
+    updateStartProjectButton();
 
     if (specificationContent) {
         previewContainer.innerHTML = marked.parse(specificationContent);
@@ -399,18 +401,50 @@ function updateSpecificationPreview(specificationContent, status) {
     }
 }
 
+function isValidGitHubRepositoryUrl(value) {
+    try {
+        const url = new URL(value);
+        const pathParts = url.pathname.split("/").filter(Boolean);
+        return (
+            url.protocol === "https:" &&
+            ["github.com", "www.github.com"].includes(url.hostname.toLowerCase()) &&
+            pathParts.length === 2 &&
+            !pathParts.some(part => part === "." || part === "..")
+        );
+    } catch (e) {
+        return false;
+    }
+}
+
+function updateStartProjectButton() {
+    const btn = document.getElementById("start-project-btn");
+    const repoInput = document.getElementById("intake-repo-url");
+    if (!btn || !repoInput) return;
+
+    const valid = isValidGitHubRepositoryUrl(repoInput.value.trim());
+    btn.disabled = !valid;
+    btn.title = valid ? "Approve the specification and start engineering" : "Enter a valid GitHub repository URL first";
+    repoInput.classList.toggle("invalid", repoInput.value.trim().length > 0 && !valid);
+}
+
 // Kickoff project creation from validated intake spec
 async function promoteIntakeToProject() {
     if (!state.activeIntakeSession || !state.activeIntakeSession.specification) return;
 
     const btn = document.getElementById("start-project-btn");
+    const repoUrlInput = document.getElementById("intake-repo-url");
+    const repoUrl = repoUrlInput ? repoUrlInput.value.trim() : "";
+    if (!isValidGitHubRepositoryUrl(repoUrl)) {
+        alert("Enter a valid GitHub repository URL before starting engineering.");
+        repoUrlInput?.focus();
+        updateStartProjectButton();
+        return;
+    }
+
     btn.disabled = true;
     btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Preparing Organization...';
 
     try {
-        const repoUrlInput = document.getElementById("intake-repo-url");
-        const repoUrl = repoUrlInput ? repoUrlInput.value.trim() : "";
-
         // 1. Create workflow
         const createRes = await fetch(`${API_BASE}/api/v1/workflows`, {
             method: "POST",
@@ -440,6 +474,7 @@ async function promoteIntakeToProject() {
             btn.innerHTML = '<i class="fa-solid fa-circle-check"></i> Approve & Start Engineering';
             
             // Reload intake coordinator for any future request
+            if (repoUrlInput) repoUrlInput.value = "";
             initIntakeChat();
         } else {
             const err = await createRes.json();

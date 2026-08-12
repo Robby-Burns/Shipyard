@@ -26,15 +26,18 @@ async def test_repository_adapter_scheme_validation():
 
 
 @pytest.mark.anyio
-async def test_repository_adapter_fallback_to_mock():
+async def test_repository_adapter_requires_token_for_user_repository():
     adapter = RepositoryAdapter()
     
-    # Empty token, standard URL
+    # A user repository must fail loudly instead of silently returning a fake
+    # commit hash when the server has not been configured with a token.
     with patch.dict(os.environ, {"GIT_TOKEN": ""}):
-        commit_hash = await adapter.commit_code("https://github.com/org/repo.git", {"a.py": "1"}, "test commit")
-        assert len(commit_hash) == 40  # Returns mock hash
+        with pytest.raises(RuntimeError, match="GIT_TOKEN"):
+            await adapter.commit_code(
+                "https://github.com/org/repo.git", {"a.py": "1"}, "test commit"
+            )
         
-    # Default workflow URL
+    # The internal placeholder remains an explicit local/test stub.
     with patch.dict(os.environ, {"GIT_TOKEN": "some_token"}):
         commit_hash = await adapter.commit_code("https://github.com/shipyard-ai/workflow-run", {"a.py": "1"}, "test commit")
         assert len(commit_hash) == 40  # Returns mock hash
