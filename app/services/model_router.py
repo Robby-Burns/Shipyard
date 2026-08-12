@@ -80,12 +80,11 @@ class ModelRouterService:
                 "Authorization": f"Bearer {settings.openrouter_api_key}",
                 "Content-Type": "application/json",
             }
-            payload = {
-                "model": model_name,
-                "messages": [msg.model_dump() for msg in request.messages],
-                "temperature": request.temperature,
-                "max_tokens": request.max_tokens,
-            }
+            selected_candidate = next(
+                (candidate for candidate in candidates if candidate["model_id"] == model_name),
+                {},
+            )
+            payload = self._build_upstream_payload(request, model_name, selected_candidate)
 
             # Normalize the configured URL so either the API root or the full
             # completion endpoint can be supplied without creating a bad path.
@@ -97,6 +96,7 @@ class ModelRouterService:
             )
             upstream_error_code = None
             upstream_error_message = None
+            upstream_error_details = None
 
             try:
                 async with httpx.AsyncClient() as client:
@@ -122,6 +122,13 @@ class ModelRouterService:
                             if isinstance(upstream_error, dict):
                                 upstream_error_code = upstream_error.get("code")
                                 upstream_error_message = upstream_error.get("message")
+                                metadata = upstream_error.get("metadata")
+                                if isinstance(metadata, dict):
+                                    upstream_error_details = (
+                                        metadata.get("raw")
+                                        or metadata.get("provider_error")
+                                        or metadata.get("provider_name")
+                                    )
                             else:
                                 upstream_error_message = str(upstream_error)
                         else:
@@ -190,7 +197,7 @@ class ModelRouterService:
                 fallback_attempted = bool(
                     request.metadata and request.metadata.get("_fallback_attempted")
                 )
-                if exc.response.status_code in {402, 404} and not fallback_attempted:
+                if exc.response.status_code in {400, 402, 404} and not fallback_attempted:
                     if exc.response.status_code == 404:
                         await ModelCatalogService(self.db).mark_unavailable(model_name)
                     refreshed_candidates = await self._select_candidates(
@@ -223,6 +230,10 @@ class ModelRouterService:
                         "upstream_status": exc.response.status_code,
                         "upstream_code": upstream_error_code,
                         "upstream_message": upstream_error_message,
+                        "upstream_details": upstream_error_details,
+                        "payload_parameters": sorted(
+                            key for key in payload if key not in {"model", "messages"}
+                        ),
                         "error": str(exc),
                     },
                 )
@@ -233,6 +244,11 @@ class ModelRouterService:
                             "Bad Gateway - OpenRouter rejected the request "
                             f"with status code {exc.response.status_code}: "
                             f"{upstream_error_message}"
+                            + (
+                                f" ({upstream_error_details})"
+                                if upstream_error_details
+                                else ""
+                            )
                         ),
                     )
                 raise HTTPException(
@@ -288,6 +304,33 @@ class ModelRouterService:
 
         return response
 
+    @staticmethod
+    def _build_upstream_payload(
+        request: ModelRouteRequest,
+        model_name: str,
+        candidate: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Send only parameters advertised by the selected catalog entry."""
+        supported = set(candidate.get("supported_parameters") or [])
+        payload: Dict[str, Any] = {
+            "model": model_name,
+            "messages": [message.model_dump() for message in request.messages],
+        }
+
+        # Older catalog records may not include supported_parameters. Preserve
+        # the OpenAI-compatible defaults in that case.
+        if not supported or "temperature" in supported:
+            if request.temperature is not None:
+                payload["temperature"] = request.temperature
+
+        if request.max_tokens is not None:
+            if not supported or "max_tokens" in supported:
+                payload["max_tokens"] = request.max_tokens
+            elif "max_completion_tokens" in supported:
+                payload["max_completion_tokens"] = request.max_tokens
+
+        return payload
+
     async def _select_candidates(
         self, request: ModelRouteRequest, force_refresh: bool = False
     ) -> List[Dict[str, Any]]:
@@ -316,6 +359,12 @@ class ModelRouterService:
             if not candidate.get("supported_parameters")
             or "max_tokens" in candidate["supported_parameters"]
             or "max_completion_tokens" in candidate["supported_parameters"]
+        ]
+        eligible = [
+            candidate
+            for candidate in eligible
+            if not candidate.get("context_length")
+            or prompt_tokens + (request.max_tokens or 2000) <= candidate["context_length"]
         ]
 
         scored = []

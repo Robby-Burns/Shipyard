@@ -65,6 +65,24 @@ def test_retired_openrouter_model_alias_is_normalized():
     assert MODEL_ALIASES["anthropic/claude-3.5-sonnet"] == "google/gemini-2.5-flash"
 
 
+def test_model_router_matches_catalog_supported_parameters():
+    request = ModelRouteRequest(
+        capability=Capability.GENERAL_REASONING,
+        messages=[ChatMessage(role="user", content="hello")],
+        temperature=0.2,
+        max_tokens=3500,
+    )
+    payload = ModelRouterService(None)._build_upstream_payload(
+        request,
+        "provider/model",
+        {"supported_parameters": ["max_completion_tokens"]},
+    )
+
+    assert payload["max_completion_tokens"] == 3500
+    assert "max_tokens" not in payload
+    assert "temperature" not in payload
+
+
 @pytest.mark.anyio
 async def test_model_router_service_execution(async_session: AsyncSession):
     service = ModelRouterService(async_session)
