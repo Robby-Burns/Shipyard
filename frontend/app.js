@@ -376,7 +376,7 @@ function updateSpecificationPreview(specificationContent, status) {
     if (status === "completed") {
         statusBadge.textContent = "VALIDATED";
         statusBadge.className = "spec-status-badge validated";
-        actionsContainer.style.display = "block"; // Show Approve & Start button
+        actionsContainer.style.display = "flex"; // Show Approve & Start button
     } else {
         statusBadge.textContent = "Drafting";
         statusBadge.className = "spec-status-badge";
@@ -405,13 +405,17 @@ async function promoteIntakeToProject() {
     btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Preparing Organization...';
 
     try {
+        const repoUrlInput = document.getElementById("intake-repo-url");
+        const repoUrl = repoUrlInput ? repoUrlInput.value.trim() : "";
+
         // 1. Create workflow
         const createRes = await fetch(`${API_BASE}/api/v1/workflows`, {
             method: "POST",
             headers: getHeaders(),
             body: JSON.stringify({
                 title: state.activeIntakeSession.title === "New Project Intake" ? "Custom Service Build" : state.activeIntakeSession.title,
-                specification: state.activeIntakeSession.specification
+                specification: state.activeIntakeSession.specification,
+                repository_url: repoUrl || null
             })
         });
 

@@ -40,12 +40,16 @@ class WorkflowEngineService:
         self, req: WorkflowCreateRequest, owner_id: Optional[str] = None, request_id: Optional[str] = None
     ) -> WorkflowRun:
         """Initialize a new engineering workflow run from a spec."""
+        initial_artifacts = {}
+        if req.repository_url:
+            initial_artifacts["repository_url"] = req.repository_url
+
         workflow = WorkflowRun(
             title=req.title,
             specification=req.specification,
             status=WorkflowStatus.CREATED,
             current_step="created",
-            artifacts={},
+            artifacts=initial_artifacts,
             owner_id=owner_id,
         )
         self.db.add(workflow)
@@ -273,6 +277,7 @@ class WorkflowEngineService:
                     context={
                         "build_plan": build_plan,
                         "architecture_doc": architecture_doc,
+                        "repository_url": workflow.artifacts.get("repository_url"),
                     },
                 ),
                 request_id=request_id,

@@ -12,7 +12,7 @@ from app.infrastructure.adapters.factory import (
 )
 from app.infrastructure.adapters.stubs import (
     StubModelAdapter,
-    StubRepositoryAdapter,
+    RepositoryAdapter,
     StubDeploymentAdapter,
 )
 
@@ -33,8 +33,8 @@ async def test_stub_model_adapter():
 
 
 @pytest.mark.anyio
-async def test_stub_repository_adapter():
-    adapter = StubRepositoryAdapter()
+async def test_repository_adapter_stub_mode():
+    adapter = RepositoryAdapter()
     assert isinstance(adapter, RepositoryInterface)
     assert await adapter.check_health() is True
     assert await adapter.validate_config() is True
@@ -63,7 +63,7 @@ def test_adapter_factory():
     deploy = get_deployment_adapter()
 
     assert isinstance(model, StubModelAdapter)
-    assert isinstance(repo, StubRepositoryAdapter)
+    assert isinstance(repo, RepositoryAdapter)
     assert isinstance(deploy, StubDeploymentAdapter)
 
     # Verify singleton behavior

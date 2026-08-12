@@ -6,7 +6,7 @@ from app.infrastructure.adapters.base import (
 )
 from app.infrastructure.adapters.stubs import (
     StubModelAdapter,
-    StubRepositoryAdapter,
+    RepositoryAdapter,
     StubDeploymentAdapter,
 )
 
@@ -24,7 +24,7 @@ def get_model_adapter() -> ModelInterface:
 def get_repository_adapter() -> RepositoryInterface:
     """Get the active repository adapter (defaults to stub for local dev)."""
     if "repository" not in _adapters:
-        _adapters["repository"] = StubRepositoryAdapter()
+        _adapters["repository"] = RepositoryAdapter()
     return _adapters["repository"]
 
 

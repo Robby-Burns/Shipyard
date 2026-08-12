@@ -57,7 +57,9 @@ class BuilderAgent(BaseAgent):
             repo_adapter = get_repository_adapter()
             commit_hash = "mock-hash"
             if files:
-                repo_url = "https://github.com/shipyard-ai/workflow-run"
+                repo_url = request.context.get("repository_url") if request.context else None
+                if not repo_url:
+                    repo_url = "https://github.com/shipyard-ai/workflow-run"
                 commit_hash = await repo_adapter.commit_code(repo_url, files, "feat: auto-generated code implementation")
 
             response.artifacts = {

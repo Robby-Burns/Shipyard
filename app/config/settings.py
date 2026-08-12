@@ -1,4 +1,5 @@
 import importlib.util
+from typing import Optional
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -57,11 +58,13 @@ class Settings(BaseSettings):
     default_model_challenge_reviewer: str = "anthropic/claude-3.5-sonnet"
     default_model_challenge_qa: str = "anthropic/claude-3.5-sonnet"
     default_model_challenge_platform: str = "openai/gpt-4o-mini"
-
     # Memory retention periods (in days)
     private_memory_retention_days: int = 7
     proposed_candidate_retention_days: int = 30
     rejected_candidate_retention_days: int = 14
+
+    # Git integration settings
+    git_token: Optional[str] = None
 
     @field_validator("database_url", mode="after")
     @classmethod

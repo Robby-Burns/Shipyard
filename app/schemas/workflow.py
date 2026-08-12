@@ -23,6 +23,7 @@ class WorkflowCreateRequest(BaseModel):
     title: str
     specification: str
     metadata_json: Optional[Dict[str, Any]] = None
+    repository_url: Optional[str] = None
 
 
 class WorkflowApprovalRequest(BaseModel):
