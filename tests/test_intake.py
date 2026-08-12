@@ -154,6 +154,66 @@ def test_intake_endpoints_full_flow(auth_headers, other_user_headers):
         assert "This is a test spec file content." in data["messages"][3]["content"]
         assert "Mock Response" in data["messages"][4]["content"]
 
+        # 7. Trigger validation via keyword "validate"
+        res = client.post(
+            f"/api/v1/intake/{session_id}/chat",
+            headers=auth_headers,
+            json={"message": "please validate the specification now"},
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "completed"
+        assert "validated and generated successfully" in data["messages"][-1]["content"]
+
+    finally:
+        app.dependency_overrides.clear()
+        if os.path.exists("artifacts/specifications"):
+            shutil.rmtree("artifacts/specifications")
+
+
+def test_intake_transition_by_turn_count(auth_headers):
+    # Setup database override for turn count test
+    test_engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+
+    async def init_and_override():
+        async with test_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        async_session = sessionmaker(
+            test_engine, class_=AsyncSession, expire_on_commit=False
+        )
+        async with async_session() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = init_and_override
+
+    try:
+        # Create session
+        res = client.post(
+            "/api/v1/intake",
+            headers=auth_headers,
+            json={"title": "Turn Count Validation Test"},
+        )
+        session_id = res.json()["id"]
+
+        # Send 7 messages (which will keep status as in_progress)
+        for i in range(7):
+            res = client.post(
+                f"/api/v1/intake/{session_id}/chat",
+                headers=auth_headers,
+                json={"message": f"Requirement turn {i+1}"},
+            )
+            assert res.json()["status"] == "in_progress"
+
+        # The 8th message triggers validation automatically
+        res = client.post(
+            f"/api/v1/intake/{session_id}/chat",
+            headers=auth_headers,
+            json={"message": "Final Requirement turn 8"},
+        )
+        data = res.json()
+        assert data["status"] == "completed"
+        assert "validated and generated successfully" in data["messages"][-1]["content"]
+
     finally:
         app.dependency_overrides.clear()
         if os.path.exists("artifacts/specifications"):

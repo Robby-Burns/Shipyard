@@ -178,8 +178,8 @@ class ModelRouterService:
             elif msg.role == "user":
                 user_prompt = msg.content
 
-        # 1. Intake Coordinator
-        if "Intake Coordinator" in system_prompt:
+        # 1. Intake Coordinator / Specification Writer
+        if "Intake Coordinator" in system_prompt or "Specification Writer" in system_prompt:
             last_user_msg = ""
             for msg in reversed(request.messages):
                 if msg.role == "user":
@@ -203,7 +203,9 @@ class ModelRouterService:
                     break
 
             is_validating = False
-            if last_user_msg:
+            if "Specification Writer" in system_prompt:
+                is_validating = True
+            elif last_user_msg:
                 msg_clean = last_user_msg.lower().strip()
                 if any(kw in msg_clean for kw in ["validate", "yes", "confirm", "proceed", "approve", "go ahead", "start"]):
                     is_validating = True

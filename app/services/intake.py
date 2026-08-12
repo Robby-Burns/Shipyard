@@ -74,19 +74,47 @@ class IntakeService:
         await self.db.commit()
 
         # 2. Compile messages for LLM review
-        system_prompt = (
-            "You are the Engineering Intake Coordinator for the Shipyard AI Engineering Organization.\n"
-            "Your task is to guide the user to provide sufficient information to generate a validated Engineering Specification.\n\n"
-            "A complete Engineering Specification must contain the following five sections:\n"
-            "1. Overview & Background: What is the goal, background, and target audience?\n"
-            "2. Functional Requirements: What are the specific capabilities and behaviors of the system?\n"
-            "3. Non-Functional Requirements: Performance, scale, security, or accessibility requirements.\n"
-            "4. Technical Architecture Constraints: Programming language, framework, database, ORM, etc.\n"
-            "5. Deployment & Infrastructure Constraints: Deployment environment, ports, environment variables.\n\n"
-            "Analyze the chat history between the user and yourself. Determine if all 5 sections have enough details to write the specification.\n"
-            "If any details are missing, your response must request the user for those specific details. Do NOT output the specification yet.\n"
-            "If all 5 sections have sufficient details, output the word 'VALIDATED' on the very first line, followed by the complete Engineering Specification formatted in Markdown."
-        )
+        # Transition to Spec Writer if user requests validation or turns exceed 8
+        is_validating = False
+        user_messages = [msg for msg in session.messages if msg["role"] == "user"]
+        if user_messages:
+            last_msg = user_messages[-1]["content"].lower()
+            if any(kw in last_msg for kw in ["validate", "yes", "confirm", "proceed", "approve", "go ahead", "start", "write the spec", "write specification", "stop acting"]):
+                is_validating = True
+            elif len(user_messages) >= 8:
+                is_validating = True
+
+        if is_validating:
+            system_prompt = (
+                "You are the Engineering Specification Writer for the Shipyard AI Engineering Organization.\n"
+                "Your job now is to write the complete, buildable Engineering Specification based on the user's input.\n"
+                "Do not act as a coordinator or ask for decisions unless a choice materially changes the architecture, security, cost, or user experience.\n\n"
+                "Use the following architectural decisions as the source of truth:\n"
+                "- Backend: Python / FastAPI\n"
+                "- Database: PostgreSQL using SQLAlchemy 2.x and Alembic migrations\n"
+                "- Containerization: Docker deployed on Railway (provider-agnostic database/hosting)\n"
+                "- LLM: Provider-agnostic via LLMProvider interface (V1: Anthropic)\n"
+                "- Browser research: BrowserResearchProvider (V1: Playwright)\n"
+                "- Orchestrator: Replaceable WorkflowOrchestrator (V1: SimpleWorkerProvider without Redis/Celery)\n"
+                "- Execution Limits: 180s global boundary, 20s individual adapter timeouts\n"
+                "- Gates: Gate 1 (outbound only) and Gate 2 (inbound + outbound)\n\n"
+                "For anything genuinely unspecified, make a reasonable engineering default and label it clearly as an implementation choice or assumption.\n\n"
+                "Output 'VALIDATED' on the very first line, followed by the complete Engineering Specification in Markdown."
+            )
+        else:
+            system_prompt = (
+                "You are the Engineering Intake Coordinator for the Shipyard AI Engineering Organization.\n"
+                "Your task is to guide the user to provide sufficient information to generate a validated Engineering Specification.\n\n"
+                "A complete Engineering Specification must contain the following five sections:\n"
+                "1. Overview & Background: What is the goal, background, and target audience?\n"
+                "2. Functional Requirements: What are the specific capabilities and behaviors of the system?\n"
+                "3. Non-Functional Requirements: Performance, scale, security, or accessibility requirements.\n"
+                "4. Technical Architecture Constraints: Programming language, framework, database, ORM, etc.\n"
+                "5. Deployment & Infrastructure Constraints: Deployment environment, ports, environment variables.\n\n"
+                "Analyze the chat history between the user and yourself. Determine if all 5 sections have enough details to write the specification.\n"
+                "If any details are missing, your response must request the user for those specific details. Do NOT output the specification yet.\n"
+                "If all 5 sections have sufficient details, output the word 'VALIDATED' on the very first line, followed by the complete Engineering Specification formatted in Markdown."
+            )
 
         llm_messages = [ChatMessage(role="system", content=system_prompt)]
         for msg in session.messages:
