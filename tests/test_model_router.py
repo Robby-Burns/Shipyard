@@ -1,6 +1,8 @@
+import httpx
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 import jwt
-import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -92,6 +94,46 @@ async def test_model_router_service_execution(async_session: AsyncSession):
     event_types = {log.event_type for log in logs}
     assert "model_route_started" in event_types
     assert "model_route_completed" in event_types
+
+
+@pytest.mark.anyio
+async def test_model_router_normalizes_base_url_and_surfaces_upstream_error(
+    async_session: AsyncSession, monkeypatch
+):
+    service = ModelRouterService(async_session)
+    monkeypatch.setattr(settings, "openrouter_api_key", "real-key")
+    monkeypatch.setattr(
+        settings, "openrouter_base_url", "https://openrouter.ai/api/v1/"
+    )
+
+    requested_urls = []
+
+    async def mock_post(self, url, **kwargs):
+        requested_urls.append(url)
+        return httpx.Response(
+            404,
+            json={
+                "error": {
+                    "code": "not_found",
+                    "message": "No such model",
+                }
+            },
+            request=httpx.Request("POST", url),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+
+    request = ModelRouteRequest(
+        capability=Capability.GENERAL_REASONING,
+        messages=[ChatMessage(role="user", content="hello")],
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await service.route(request, request_id="not-found-id")
+
+    assert requested_urls == ["https://openrouter.ai/api/v1/chat/completions"]
+    assert exc_info.value.status_code == 502
+    assert "No such model" in exc_info.value.detail
 
 
 def test_model_router_endpoint_unauthenticated():

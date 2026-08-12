@@ -76,14 +76,46 @@ class ModelRouterService:
                 "max_tokens": request.max_tokens,
             }
 
+            # Normalize the configured URL so either the API root or the full
+            # completion endpoint can be supplied without creating a bad path.
+            configured_url = settings.openrouter_base_url.rstrip("/")
+            completion_url = (
+                configured_url
+                if configured_url.endswith("/chat/completions")
+                else f"{configured_url}/chat/completions"
+            )
+            upstream_error_code = None
+            upstream_error_message = None
+
             try:
                 async with httpx.AsyncClient() as client:
                     res = await client.post(
-                        f"{settings.openrouter_base_url}/chat/completions",
+                        completion_url,
                         json=payload,
                         headers=headers,
                         timeout=30.0,
                     )
+
+                    # Preserve the provider's actionable error before
+                    # raise_for_status() turns it into a generic exception.
+                    if res.is_error:
+                        try:
+                            upstream_payload = res.json()
+                        except ValueError:
+                            upstream_payload = None
+
+                        if isinstance(upstream_payload, dict):
+                            upstream_error = upstream_payload.get(
+                                "error", upstream_payload
+                            )
+                            if isinstance(upstream_error, dict):
+                                upstream_error_code = upstream_error.get("code")
+                                upstream_error_message = upstream_error.get("message")
+                            else:
+                                upstream_error_message = str(upstream_error)
+                        else:
+                            upstream_error_message = res.text[:500].strip() or None
+
                     res.raise_for_status()
                     data = res.json()
 
@@ -135,9 +167,22 @@ class ModelRouterService:
                     payload={
                         "capability": request.capability.value,
                         "model": model_name,
+                        "endpoint": completion_url,
+                        "upstream_status": exc.response.status_code,
+                        "upstream_code": upstream_error_code,
+                        "upstream_message": upstream_error_message,
                         "error": str(exc),
                     },
                 )
+                if upstream_error_message:
+                    raise HTTPException(
+                        status_code=502,
+                        detail=(
+                            "Bad Gateway - OpenRouter rejected the request "
+                            f"with status code {exc.response.status_code}: "
+                            f"{upstream_error_message}"
+                        ),
+                    )
                 raise HTTPException(
                     status_code=502,
                     detail=f"Bad Gateway – OpenRouter API returned status code {exc.response.status_code}",
