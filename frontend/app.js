@@ -372,15 +372,18 @@ function updateSpecificationPreview(specificationContent, status) {
     const previewContainer = document.getElementById("spec-preview");
     const statusBadge = document.getElementById("spec-status");
     const actionsContainer = document.getElementById("intake-actions-container");
+    const chatInput = document.getElementById("chat-input");
 
     if (status === "completed") {
-        statusBadge.textContent = "VALIDATED";
+        statusBadge.textContent = "Ready for Approval";
         statusBadge.className = "spec-status-badge validated";
         actionsContainer.style.display = "flex"; // Show Approve & Start button
+        chatInput.placeholder = "Ask a question or request changes before approving...";
     } else {
         statusBadge.textContent = "Drafting";
         statusBadge.className = "spec-status-badge";
         actionsContainer.style.display = "none";
+        chatInput.placeholder = "Describe your product requirements, stack constraints, or paste documentation...";
     }
 
     if (specificationContent) {

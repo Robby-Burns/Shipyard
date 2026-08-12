@@ -165,6 +165,19 @@ def test_intake_endpoints_full_flow(auth_headers, other_user_headers):
         assert data["status"] == "completed"
         assert "validated and generated successfully" in data["messages"][-1]["content"]
 
+        # 8. Continue discussing the generated specification before approval
+        completed_specification = data["specification"]
+        res = client.post(
+            f"/api/v1/intake/{session_id}/chat",
+            headers=auth_headers,
+            json={"message": "Can you explain the database choice?"},
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "completed"
+        assert data["specification"] == completed_specification
+        assert "Can you explain the database choice?" in data["messages"][-2]["content"]
+
     finally:
         app.dependency_overrides.clear()
         if os.path.exists("artifacts/specifications"):

@@ -63,9 +63,6 @@ class IntakeService:
         if not session:
             raise ValueError(f"Intake session {session_id} not found")
 
-        if session.status == "completed":
-            raise ValueError("Intake session is already completed")
-
         # 1. Append user message to history
         new_messages = list(session.messages)
         new_messages.append({"role": "user", "content": message})
@@ -84,7 +81,17 @@ class IntakeService:
             elif len(user_messages) >= 8:
                 is_validating = True
 
-        if is_validating:
+        if session.specification:
+            system_prompt = (
+                "You are the Engineering Intake Coordinator for the Shipyard AI Engineering Organization.\n"
+                "The user has a generated Engineering Specification below, but has not approved it yet.\n"
+                "Continue the conversation normally: answer questions, explain decisions, and incorporate requested changes.\n"
+                "If the user requests a change to the specification, output 'VALIDATED' on the very first line, followed by the complete updated Engineering Specification in Markdown.\n"
+                "If the user is only asking a question or discussing the design, respond conversationally without the VALIDATED marker.\n\n"
+                "CURRENT ENGINEERING SPECIFICATION:\n"
+                f"{session.specification}"
+            )
+        elif is_validating:
             system_prompt = (
                 "You are the Engineering Specification Writer for the Shipyard AI Engineering Organization.\n"
                 "Your job now is to write the complete, buildable Engineering Specification based on the user's input.\n"
