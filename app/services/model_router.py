@@ -1,9 +1,11 @@
-from typing import Any, Dict, Optional
+import time
+from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
+from sqlalchemy import select
 
 from app.config.settings import settings
 from app.schemas.model_router import (
@@ -12,6 +14,8 @@ from app.schemas.model_router import (
     ModelRouteResponse,
 )
 from app.services.activity_log import ActivityLogService
+from app.services.model_catalog import ModelCatalogService
+from app.database.models.model_routing import ModelRoutingOutcome
 
 logger = structlog.get_logger()
 
@@ -45,11 +49,9 @@ class ModelRouterService:
     async def route(
         self, request: ModelRouteRequest, request_id: Optional[str] = None
     ) -> ModelRouteResponse:
-        model_name = self.resolve_model(request.capability)
-        if request.metadata and "model_override" in request.metadata:
-            model_name = MODEL_ALIASES.get(
-                request.metadata["model_override"], request.metadata["model_override"]
-            )
+        candidates = await self._select_candidates(request)
+        model_name = candidates[0]["model_id"]
+        start_time = time.perf_counter()
 
 
         # Log routing attempt
@@ -141,6 +143,9 @@ class ModelRouterService:
                         usage=usage,
                     )
             except httpx.TimeoutException as exc:
+                await self._record_outcome(
+                    request, request_id, model_name, {}, success=False, error=exc
+                )
                 await self.activity_log_service.record(
                     event_type="model_route_failed",
                     source="model_router",
@@ -156,6 +161,9 @@ class ModelRouterService:
                     detail="Gateway Timeout – OpenRouter API request timed out",
                 )
             except (httpx.ConnectError, httpx.NetworkError) as exc:
+                await self._record_outcome(
+                    request, request_id, model_name, {}, success=False, error=exc
+                )
                 await self.activity_log_service.record(
                     event_type="model_route_failed",
                     source="model_router",
@@ -171,6 +179,39 @@ class ModelRouterService:
                     detail="Service Unavailable – failed to connect to OpenRouter API",
                 )
             except httpx.HTTPStatusError as exc:
+                await self._record_outcome(
+                    request,
+                    request_id,
+                    model_name,
+                    {},
+                    success=False,
+                    error=exc,
+                )
+                fallback_attempted = bool(
+                    request.metadata and request.metadata.get("_fallback_attempted")
+                )
+                if exc.response.status_code in {402, 404} and not fallback_attempted:
+                    if exc.response.status_code == 404:
+                        await ModelCatalogService(self.db).mark_unavailable(model_name)
+                    refreshed_candidates = await self._select_candidates(
+                        request, force_refresh=exc.response.status_code == 404
+                    )
+                    fallback = next(
+                        (
+                            candidate["model_id"]
+                            for candidate in refreshed_candidates
+                            if candidate["model_id"] != model_name
+                        ),
+                        None,
+                    )
+                    if fallback:
+                        metadata = dict(request.metadata or {})
+                        metadata["model_override"] = fallback
+                        metadata["_fallback_attempted"] = True
+                        return await self.route(
+                            request.model_copy(update={"metadata": metadata}),
+                            request_id=request_id,
+                        )
                 await self.activity_log_service.record(
                     event_type="model_route_failed",
                     source="model_router",
@@ -199,6 +240,9 @@ class ModelRouterService:
                     detail=f"Bad Gateway – OpenRouter API returned status code {exc.response.status_code}",
                 )
             except Exception as exc:
+                await self._record_outcome(
+                    request, request_id, model_name, {}, success=False, error=exc
+                )
                 await self.activity_log_service.record(
                     event_type="model_route_failed",
                     source="model_router",
@@ -215,6 +259,22 @@ class ModelRouterService:
                 )
 
         # Record completion log
+        selected_candidate = next(
+            (candidate for candidate in candidates if candidate["model_id"] == model_name),
+            {},
+        )
+        response.usage["estimated_cost"] = self._estimate_cost(
+            response.usage, selected_candidate
+        )
+        await self._record_outcome(
+            request,
+            request_id,
+            model_name,
+            response.usage,
+            success=True,
+            error=None,
+            latency_ms=(time.perf_counter() - start_time) * 1000,
+        )
         await self.activity_log_service.record(
             event_type="model_route_completed",
             source="model_router",
@@ -227,6 +287,229 @@ class ModelRouterService:
         )
 
         return response
+
+    async def _select_candidates(
+        self, request: ModelRouteRequest, force_refresh: bool = False
+    ) -> List[Dict[str, Any]]:
+        override = request.metadata.get("model_override") if request.metadata else None
+        preferred = MODEL_ALIASES.get(override, override) if override else None
+        if settings.openrouter_api_key == "mock-key":
+            return [
+                {
+                    "model_id": preferred or self.resolve_model(request.capability),
+                    "input_price_per_million": 0.0,
+                    "output_price_per_million": 0.0,
+                }
+            ]
+        catalog = await ModelCatalogService(self.db).get_candidates(force_refresh=force_refresh)
+        prompt_tokens = max(1, sum(len(message.content) for message in request.messages) // 4)
+        eligible = [
+            candidate
+            for candidate in catalog
+            if not candidate.get("max_completion_tokens")
+            or not request.max_tokens
+            or candidate["max_completion_tokens"] >= request.max_tokens
+        ]
+        eligible = [
+            candidate
+            for candidate in eligible
+            if not candidate.get("supported_parameters")
+            or "max_tokens" in candidate["supported_parameters"]
+            or "max_completion_tokens" in candidate["supported_parameters"]
+        ]
+
+        scored = []
+        for candidate in eligible:
+            score = await self._score_candidate(
+                request,
+                candidate,
+                prompt_tokens,
+                request.max_tokens or 2000,
+            )
+            scored.append((score, candidate))
+        scored.sort(key=lambda item: item[0], reverse=True)
+        candidates = [candidate for _, candidate in scored]
+
+        if preferred:
+            preferred_entry = next(
+                (candidate for candidate in candidates if candidate["model_id"] == preferred),
+                {"model_id": preferred, "input_price_per_million": 0.0, "output_price_per_million": 0.0},
+            )
+            candidates = [preferred_entry] + [
+                candidate for candidate in candidates if candidate["model_id"] != preferred
+            ]
+
+        if not candidates:
+            candidates = [
+                {
+                    "model_id": self.resolve_model(request.capability),
+                    "input_price_per_million": 0.0,
+                    "output_price_per_million": 0.0,
+                }
+            ]
+        return candidates[: max(1, settings.model_route_max_candidates)]
+
+    async def _score_candidate(
+        self,
+        request: ModelRouteRequest,
+        candidate: Dict[str, Any],
+        prompt_tokens: int,
+        max_tokens: int,
+    ) -> float:
+        quality_prior = self._quality_prior(candidate)
+        result = await self.db.execute(
+            select(ModelRoutingOutcome)
+            .where(
+                ModelRoutingOutcome.capability == request.capability.value,
+                ModelRoutingOutcome.model_id == candidate["model_id"],
+            )
+            .order_by(ModelRoutingOutcome.created_at.desc())
+            .limit(30)
+        )
+        outcomes = list(result.scalars().all())
+        target_features = self._task_features(request)
+        similar_outcomes = [
+            row
+            for row in outcomes
+            if self._features_match(row.task_features, target_features)
+        ]
+        if len(similar_outcomes) >= 2:
+            outcomes = similar_outcomes
+        if outcomes:
+            observed = [row.quality_score for row in outcomes if row.quality_score is not None]
+            quality = sum(observed) / len(observed) if observed else quality_prior
+            reliability = sum(1 for row in outcomes if row.success) / len(outcomes)
+            latencies = [row.latency_ms for row in outcomes if row.latency_ms is not None]
+            latency_score = (
+                1.0 / (1.0 + (sum(latencies) / len(latencies)) / 3000.0)
+                if latencies
+                else 0.5
+            )
+        else:
+            quality = quality_prior
+            reliability = 0.5
+            latency_score = 0.5
+        estimated_cost = self._estimate_cost(
+            {"prompt_tokens": prompt_tokens, "completion_tokens": max_tokens}, candidate
+        )
+        cost_score = 1.0 / (1.0 + estimated_cost * 100.0)
+        return (
+            quality * 0.50
+            + reliability * 0.20
+            + cost_score * 0.20
+            + latency_score * 0.10
+        )
+
+    @staticmethod
+    def _quality_prior(candidate: Dict[str, Any]) -> float:
+        benchmarks = candidate.get("benchmarks") or {}
+        numeric = [
+            float(value) / 100 if value > 1 else float(value)
+            for value in benchmarks.values()
+            if isinstance(value, (int, float))
+        ] if isinstance(benchmarks, dict) else []
+        if numeric:
+            return max(0.1, min(1.0, sum(numeric) / len(numeric)))
+        model_id = candidate["model_id"].lower()
+        if any(marker in model_id for marker in ("pro", "opus", "sonnet", "gpt-4")):
+            return 0.75
+        if any(marker in model_id for marker in ("mini", "flash", "lite", "nano", "small")):
+            return 0.60
+        return 0.65
+
+    @staticmethod
+    def _estimate_cost(usage: Dict[str, Any], candidate: Dict[str, Any]) -> float:
+        prompt = float(usage.get("prompt_tokens") or 0)
+        completion = float(usage.get("completion_tokens") or 0)
+        input_price = float(candidate.get("input_price_per_million") or 0)
+        output_price = float(candidate.get("output_price_per_million") or 0)
+        return (prompt * input_price + completion * output_price) / 1_000_000
+
+    async def _record_outcome(
+        self,
+        request: ModelRouteRequest,
+        request_id: Optional[str],
+        model_name: str,
+        usage: Dict[str, Any],
+        success: bool,
+        error: Optional[Exception],
+        latency_ms: Optional[float] = None,
+    ) -> None:
+        quality_score = request.metadata.get("quality_score") if request.metadata else None
+        if quality_score is None and success:
+            quality_score = 0.45 if usage.get("finish_reason") == "length" else 0.6
+        self.db.add(
+            ModelRoutingOutcome(
+                request_id=request_id,
+                capability=request.capability.value,
+                model_id=model_name,
+                prompt_tokens=usage.get("prompt_tokens"),
+                completion_tokens=usage.get("completion_tokens"),
+                estimated_cost=usage.get("estimated_cost"),
+                latency_ms=latency_ms,
+                success=success,
+                quality_score=quality_score,
+                finish_reason=usage.get("finish_reason"),
+                error_code=None,
+                error_message=str(error)[:500] if error else None,
+                task_features=self._task_features(request),
+            )
+        )
+        await self.db.commit()
+
+    async def record_quality_feedback(
+        self,
+        request_id: str,
+        model_id: str,
+        capability: Capability,
+        quality_score: float,
+    ) -> None:
+        result = await self.db.execute(
+            select(ModelRoutingOutcome)
+            .where(
+                ModelRoutingOutcome.request_id == request_id,
+                ModelRoutingOutcome.model_id == model_id,
+                ModelRoutingOutcome.capability == capability.value,
+            )
+            .order_by(ModelRoutingOutcome.created_at.desc())
+            .limit(1)
+        )
+        outcome = result.scalar_one_or_none()
+        if outcome:
+            outcome.quality_score = max(0.0, min(1.0, quality_score))
+            await self.db.commit()
+
+    @staticmethod
+    def _task_features(request: ModelRouteRequest) -> Dict[str, Any]:
+        prompt = "\n".join(message.content for message in request.messages)
+        prompt_lower = prompt.lower()
+        prompt_tokens = max(1, len(prompt) // 4)
+        return {
+            "prompt_size": (
+                "small" if prompt_tokens < 1000 else
+                "medium" if prompt_tokens < 4000 else "large"
+            ),
+            "max_tokens": (
+                "small" if (request.max_tokens or 2000) < 1500 else
+                "medium" if (request.max_tokens or 2000) < 3500 else "large"
+            ),
+            "contains_code": any(
+                marker in prompt_lower
+                for marker in ("code", "function", "python", "typescript", "javascript")
+            ),
+            "structured_output": any(
+                marker in prompt_lower
+                for marker in ("json", "xml", "mermaid", "schema", "specification")
+            ),
+        }
+
+    @staticmethod
+    def _features_match(
+        observed: Optional[Dict[str, Any]], target: Dict[str, Any]
+    ) -> bool:
+        if not observed:
+            return False
+        return sum(observed.get(key) == value for key, value in target.items()) >= 3
 
     def _get_mock_content(self, request: ModelRouteRequest) -> str:
         # Determine caller by scanning messages

@@ -35,6 +35,7 @@ class ChallengerAgent(BaseAgent):
         primary_output: str,
         specification_ref: Optional[uuid.UUID] = None,
         model_override: Optional[str] = None,
+        primary_model: Optional[str] = None,
         request_id: Optional[str] = None,
     ) -> AgentExecutionResponse:
         task_input = (
@@ -87,4 +88,19 @@ class ChallengerAgent(BaseAgent):
                 "challenge_status": status,
                 "challenge_reason": reason if reason else "No details provided."
             }
+            if primary_model and request_id:
+                primary_capability = {
+                    "coordinator_planning": Capability.GENERAL_REASONING,
+                    "architect_designing": Capability.ARCHITECTURE,
+                    "builder_building": Capability.CODING,
+                    "reviewer_reviewing": Capability.CODE_REVIEW,
+                    "qa_testing": Capability.TESTING,
+                    "platform_reporting": Capability.GENERAL_REASONING,
+                }.get(step_name, Capability.GENERAL_REASONING)
+                await self.model_router.record_quality_feedback(
+                    request_id,
+                    primary_model,
+                    primary_capability,
+                    1.0 if status == "passed" else 0.0,
+                )
         return response

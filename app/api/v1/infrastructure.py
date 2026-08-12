@@ -22,13 +22,13 @@ async def get_infrastructure_status(
     model_health = await model_adapter.check_health()
     model_details = {
         "Capabilities & Routing": {
-            "Architecture Design": settings.default_model_architecture,
-            "Code Generation": settings.default_model_coding,
-            "Code Review Analysis": settings.default_model_code_review,
-            "QA / Test Verification": settings.default_model_testing,
-            "General Intake & Learning": settings.default_model_general_reasoning,
+            "Strategy": "Live catalog + learned quality, reliability, and cost scoring",
+            "Candidate Count": settings.model_route_max_candidates,
+            "Catalog Cache (minutes)": settings.model_catalog_ttl_minutes,
+            "Emergency Fallbacks": ", ".join(settings.model_emergency_fallbacks),
         },
         "Endpoint URL": settings.openrouter_base_url,
+        "Catalog URL": settings.openrouter_catalog_url or "Derived from endpoint /models",
     }
     components = [
         InfrastructureComponent(

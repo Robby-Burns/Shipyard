@@ -112,6 +112,24 @@ async def test_model_router_normalizes_base_url_and_surfaces_upstream_error(
 
     requested_urls = []
 
+    async def mock_get(self, url, **kwargs):
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "id": "google/gemini-2.5-flash",
+                        "name": "Gemini 2.5 Flash",
+                        "context_length": 1000000,
+                        "pricing": {"prompt": "0.0000003", "completion": "0.0000025"},
+                        "top_provider": {"max_completion_tokens": 8192},
+                        "supported_parameters": ["max_tokens"],
+                    }
+                ]
+            },
+            request=httpx.Request("GET", url),
+        )
+
     async def mock_post(self, url, **kwargs):
         requested_urls.append(url)
         return httpx.Response(
@@ -126,6 +144,7 @@ async def test_model_router_normalizes_base_url_and_surfaces_upstream_error(
         )
 
     monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+    monkeypatch.setattr(httpx.AsyncClient, "get", mock_get)
 
     request = ModelRouteRequest(
         capability=Capability.GENERAL_REASONING,

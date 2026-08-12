@@ -118,6 +118,7 @@ class WorkflowEngineService:
                 primary_output=exec_res.output_text,
                 specification_ref=workflow_id,
                 model_override=settings.default_model_challenge_coordinator,
+                primary_model=exec_res.model_used,
                 request_id=request_id,
             )
 
@@ -202,6 +203,7 @@ class WorkflowEngineService:
                 primary_output=exec_res.output_text,
                 specification_ref=workflow_id,
                 model_override=settings.default_model_challenge_architect,
+                primary_model=exec_res.model_used,
                 request_id=request_id,
             )
 
@@ -290,6 +292,7 @@ class WorkflowEngineService:
                 primary_output=exec_res.output_text,
                 specification_ref=workflow_id,
                 model_override=settings.default_model_challenge_builder,
+                primary_model=exec_res.model_used,
                 request_id=request_id,
             )
 
@@ -376,6 +379,7 @@ class WorkflowEngineService:
                 primary_output=exec_res.output_text,
                 specification_ref=workflow_id,
                 model_override=settings.default_model_challenge_reviewer,
+                primary_model=exec_res.model_used,
                 request_id=request_id,
             )
 
@@ -481,6 +485,7 @@ class WorkflowEngineService:
                 primary_output=exec_res.output_text,
                 specification_ref=workflow_id,
                 model_override=settings.default_model_challenge_qa,
+                primary_model=exec_res.model_used,
                 request_id=request_id,
             )
 
@@ -574,6 +579,7 @@ class WorkflowEngineService:
                         primary_output=platform_res.output_text,
                         specification_ref=workflow_id,
                         model_override=settings.default_model_challenge_platform,
+                        primary_model=platform_res.model_used,
                         request_id=request_id,
                     )
                     
