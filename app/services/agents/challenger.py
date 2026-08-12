@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.schemas.agent import AgentExecutionRequest, AgentExecutionResponse, DisciplineRole
 from app.schemas.model_router import Capability
 from app.services.agents.base import BaseAgent
+from app.services.specification_contract import missing_build_plan_sections
 
 
 class ChallengerAgent(BaseAgent):
@@ -90,6 +91,18 @@ class ChallengerAgent(BaseAgent):
                 "challenge_status": status,
                 "challenge_reason": reason if reason else "No details provided."
             }
+            if step_name == "coordinator_planning":
+                missing_sections = missing_build_plan_sections(primary_output)
+                if missing_sections:
+                    status = "failed"
+                    response.artifacts = {
+                        "challenge_status": "failed",
+                        "challenge_reason": (
+                            "Coordinator build plan is missing required structure: "
+                            + ", ".join(missing_sections)
+                            + ". Regenerate build-plan.md as numbered phases with Objectives, Tasks, Timeline, Resources, and Deliverables."
+                        ),
+                    }
             if primary_model and request_id:
                 primary_capability = {
                     "coordinator_planning": Capability.GENERAL_REASONING,

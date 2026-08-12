@@ -12,6 +12,10 @@ from app.database.models.intake import IntakeSession
 from app.schemas.model_router import Capability, ChatMessage, ModelRouteRequest
 from app.services.model_router import ModelRouterService
 from app.services.activity_log import ActivityLogService
+from app.services.specification_contract import (
+    ENGINEERING_SPEC_TEMPLATE,
+    missing_engineering_spec_sections,
+)
 
 
 class IntakeService:
@@ -89,7 +93,8 @@ class IntakeService:
                 "Continue the conversation normally: answer questions, explain decisions, and incorporate requested changes.\n"
                 "If the user requests a change to the specification, output 'VALIDATED' on the very first line, followed by the complete updated Engineering Specification in Markdown.\n"
                 "If the user is only asking a question or discussing the design, respond conversationally without the VALIDATED marker.\n\n"
-                "When revising the specification, preserve useful content, update only what is affected, and remove repetition. Use concise technical writing, compact bullets, and small tables; do not add filler or full source code. Completeness takes priority over a word target.\n\n"
+                "When revising the specification, preserve useful content, update only what is affected, and remove repetition. Use concise technical writing, compact bullets, and small tables; do not add filler or full source code. Completeness takes priority over a word target.\n"
+                "Every revised specification must preserve the required template headings, including per-agent responsibilities and Missing Inputs & Upload Requests.\n\n"
                 "CURRENT ENGINEERING SPECIFICATION:\n"
                 f"{session.specification}"
             )
@@ -111,6 +116,9 @@ class IntakeService:
                 "Use concise technical writing and produce the smallest complete specification possible.\n"
                 "Capture decisions, requirements, interfaces, constraints, risks, and acceptance criteria; do not repeat the user's background, add filler, include full source code, or restate the same requirement in multiple sections.\n"
                 "Prefer compact bullets and small tables where they improve clarity.\n\n"
+                "The specification must be one shared Markdown document with the exact template shape below. Fill every section with actionable content. The Agent Responsibilities section must tell each downstream agent what it needs to do and what inputs or outputs it owns. The Missing Inputs & Upload Requests section must list any documentation, credentials, examples, exports, screenshots, logs, schemas, repository links, or other files that should be uploaded before or during the build if an agent requests them; write 'None currently known' only when nothing is missing.\n\n"
+                "Required template:\n"
+                f"{ENGINEERING_SPEC_TEMPLATE.format(project_title='Project Title')}\n"
                 "Output 'VALIDATED' on the very first line, followed by the complete Engineering Specification in Markdown.\n"
                 "Write every section completely. Do not stop mid-list, mid-table, or mid-section."
             )
@@ -118,15 +126,13 @@ class IntakeService:
             system_prompt = (
                 "You are the Engineering Intake Coordinator for the Shipyard AI Engineering Organization.\n"
                 "Your task is to guide the user to provide sufficient information to generate a validated Engineering Specification.\n\n"
-                "A complete Engineering Specification must contain the following five sections:\n"
-                "1. Overview & Background: What is the goal, background, and target audience?\n"
-                "2. Functional Requirements: What are the specific capabilities and behaviors of the system?\n"
-                "3. Non-Functional Requirements: Performance, scale, security, or accessibility requirements.\n"
-                "4. Technical Architecture Constraints: Programming language, framework, database, ORM, etc.\n"
-                "5. Deployment & Infrastructure Constraints: Deployment environment, ports, environment variables.\n\n"
-                "Analyze the chat history between the user and yourself. Determine if all 5 sections have enough details to write the specification.\n"
+                "A complete Engineering Specification must use one shared Markdown document with required shared sections plus explicit per-agent subsections for Coordinator, Architect, Builder, Reviewer, QA, and Platform.\n"
+                "It must also include a Missing Inputs & Upload Requests section for documentation, credentials, examples, exports, screenshots, logs, schemas, repository links, or other files that should be uploaded if requested before or during the build.\n\n"
+                "Required template:\n"
+                f"{ENGINEERING_SPEC_TEMPLATE.format(project_title='Project Title')}\n"
+                "Analyze the chat history between the user and yourself. Determine if every required section has enough details to write the specification.\n"
                 "If any details are missing, your response must request the user for those specific details. Do NOT output the specification yet.\n"
-                "If all 5 sections have sufficient details, output the word 'VALIDATED' on the very first line, followed by the complete Engineering Specification formatted in Markdown."
+                "If all required sections have sufficient details, output the word 'VALIDATED' on the very first line, followed by the complete Engineering Specification formatted in Markdown."
             )
 
         llm_messages = [ChatMessage(role="system", content=system_prompt)]
@@ -159,6 +165,21 @@ class IntakeService:
         if llm_content.startswith("VALIDATED"):
             # Extract specification content following VALIDATED keyword
             spec_markdown = llm_content[len("VALIDATED"):].strip()
+            missing_sections = missing_engineering_spec_sections(spec_markdown)
+            if missing_sections:
+                rejection_message = (
+                    "The generated Engineering Specification was rejected because it is missing required sections:\n"
+                    + "\n".join(f"- {section}" for section in missing_sections)
+                    + "\n\nPlease provide or confirm the missing details, then ask to validate again."
+                )
+                new_messages.append({"role": "assistant", "content": rejection_message})
+                session.messages = new_messages
+                session.status = "in_progress"
+                flag_modified(session, "messages")
+                await self.db.commit()
+                await self.db.refresh(session)
+                return session
+
             session.specification = spec_markdown
             session.status = "completed"
             new_messages.append({
@@ -225,7 +246,7 @@ class IntakeService:
             if not continuation:
                 break
 
-            specification = f"{specification}\n{continuation}"
+            specification = f"{specification}{continuation}"
             if continuation_response.usage.get("finish_reason") != "length":
                 break
 

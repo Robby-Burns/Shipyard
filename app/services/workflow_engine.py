@@ -4,6 +4,7 @@ import os
 import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 import structlog
 
 from app.database.models.workflow import WorkflowRun
@@ -943,12 +944,58 @@ class WorkflowEngineService:
         return result.scalar_one_or_none()
 
     async def list_workflows(
-        self, owner_id: Optional[str] = None, limit: int = 100, offset: int = 0
+        self,
+        owner_id: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+        include_hidden: bool = False,
     ) -> List[WorkflowRun]:
         stmt = select(WorkflowRun)
         if owner_id:
             stmt = stmt.where(WorkflowRun.owner_id == owner_id)
         stmt = stmt.order_by(WorkflowRun.created_at.desc(), WorkflowRun.id.desc())
-        stmt = stmt.limit(limit).offset(offset)
         result = await self.db.execute(stmt)
-        return list(result.scalars().all())
+        workflows = list(result.scalars().all())
+        if not include_hidden:
+            workflows = [
+                workflow
+                for workflow in workflows
+                if not workflow.artifacts.get("portfolio_hidden")
+            ]
+        return workflows[offset:offset + limit]
+
+    async def hide_workflow_from_portfolio(
+        self,
+        workflow_id: uuid.UUID,
+        hidden_by: Optional[str] = None,
+        request_id: Optional[str] = None,
+    ) -> WorkflowRun:
+        result = await self.db.execute(
+            select(WorkflowRun).where(WorkflowRun.id == workflow_id)
+        )
+        workflow = result.scalar_one_or_none()
+        if not workflow:
+            raise ValueError("Workflow run not found")
+        if workflow.status != WorkflowStatus.FAILED:
+            raise ValueError("Only terminated projects can be removed from the portfolio")
+
+        artifacts = dict(workflow.artifacts or {})
+        artifacts["portfolio_hidden"] = True
+        artifacts["portfolio_hidden_at"] = datetime.now(timezone.utc).isoformat()
+        if hidden_by:
+            artifacts["portfolio_hidden_by"] = hidden_by
+        workflow.artifacts = artifacts
+        flag_modified(workflow, "artifacts")
+        await self.db.commit()
+        await self.db.refresh(workflow)
+
+        await self.activity_log.record(
+            event_type="workflow_portfolio_hidden",
+            source="workflow_engine",
+            request_id=request_id,
+            payload={
+                "workflow_id": str(workflow.id),
+                "hidden_by": hidden_by,
+            },
+        )
+        return workflow

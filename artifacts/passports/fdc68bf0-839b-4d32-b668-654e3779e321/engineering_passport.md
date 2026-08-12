@@ -1,0 +1,1 @@
+[Mock Response for architecture using anthropic/claude-3.5-sonnet]

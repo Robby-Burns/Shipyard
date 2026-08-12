@@ -926,11 +926,12 @@ class ModelRouterService:
                 return (
                     "I am the Engineering Intake Coordinator. I've analyzed your project idea. [Mock Response]\n\n"
                     "To generate a validated Engineering Specification, please provide or confirm details for:\n"
-                    "- **Overview & Background**: Project scope and target users.\n"
-                    "- **Functional Requirements**: Core capabilities and endpoints.\n"
-                    "- **Non-Functional Requirements**: Security and latency expectations.\n"
-                    "- **Technical Architecture Constraints**: Programming language and database stack.\n"
-                    "- **Deployment & Infrastructure Constraints**: Port configuration and deployment target.\n\n"
+                    "- **Request Summary, Objectives, Scope, and Non-Goals**: What should be built and what is out of scope.\n"
+                    "- **Requirements, Constraints, and Assumptions**: Functional behavior, quality requirements, stack, deployment, and defaults.\n"
+                    "- **Agent Responsibilities**: Coordinator, Architect, Builder, Reviewer, QA, and Platform expectations.\n"
+                    "- **Phase Plan**: Numbered phases with Objectives, Tasks, Timeline, Resources, and Deliverables.\n"
+                    "- **Missing Inputs & Upload Requests**: Documentation, credentials, exports, examples, screenshots, logs, schemas, repository links, or files that may need upload.\n"
+                    "- **Validation Checklist, Risks and Blockers, and Acceptance Criteria**: How the build will be verified.\n\n"
                     "*(Tip: You can type 'validate' or 'yes' to generate the engineering specification immediately!)*"
                 )
 
@@ -980,36 +981,97 @@ class ModelRouterService:
         return f"[Mock Response for {request.capability.value} using {self.resolve_model(request.capability)}]"
 
     def _generate_mock_specification(self, project_title: str) -> str:
-        return f"""# Engineering Specification: {project_title}
+        return f"""# Live Engineering Specification: {project_title}
 
-## 1. Overview & Background
-The objective of this project is to implement a high-performance **{project_title}** system that integrates into the existing Shipyard platform architecture. The target audience includes core system developers and downstream client applications requiring unified interface endpoints.
+## Request Summary
+Implement **{project_title}** as a FastAPI service integrated with the existing Shipyard platform.
 
-## 2. Functional Requirements
-- **FR-001**: Implement structured JSON payload intake with schemas checks.
+## Objectives
+- Provide structured request handling, persistence, and operational visibility.
+- Preserve provider-agnostic boundaries for infrastructure and model integrations.
+
+## Scope
+- API handlers, service layer behavior, database persistence, activity logging, tests, and deployment configuration.
+
+## Non-Goals
+- Replacing the existing workflow engine or model router.
+- Building a separate frontend outside the current Shipyard interface.
+
+## Requirements
+- **FR-001**: Implement structured JSON payload intake with schema validation.
 - **FR-002**: Generate detailed activity trails and log them to the Engineering Journal.
-- **FR-003**: Provide a clean dashboard view mapping active adapter status, health checks, and connection protocols.
+- **FR-003**: Provide dashboard-ready adapter status and health-check data.
 - **FR-004**: Expose standardized health (`/healthz`) and readiness (`/readyz`) endpoints.
+- **NFR-001**: Average API response latency must be less than 150ms under normal concurrent workloads.
+- **NFR-002**: Enforce JWT verification for protected `/api/v1/` endpoints.
 
-## 3. Non-Functional Requirements
-- **NFR-001 (Performance)**: Average API response latency must be less than 150ms under concurrent workloads.
-- **NFR-002 (Security)**: Enforce JSON Web Token (JWT) verification for all endpoints under the `/api/v1/` prefix.
-- **NFR-003 (Robustness)**: Gracefully handle network disconnects, logging failures, and adapter exceptions without leaking system internals.
-
-## 4. Technical Architecture Constraints
+## Constraints
 - **Language**: Python 3.11+
-- **Framework**: FastAPI (using asynchronous routers and handlers)
-- **Database**: PostgreSQL (SQLAlchemy 2.0 with asyncpg driver)
-- **Logging**: Structlog structured logging output
+- **Framework**: FastAPI with asynchronous routers and handlers.
+- **Database**: PostgreSQL through SQLAlchemy 2.x and Alembic migrations.
+- **Deployment**: Docker container deployed on Railway.
+- **Environment Variables**: `DATABASE_URL`, `JWT_SECRET_KEY`, `APP_ENV`.
 
-## 5. Deployment & Infrastructure Constraints
-- **Environment**: Containerized Docker image (`shipyard-app:latest`)
-- **Port Mapping**: Expose port `8000` inside the container
-- **Deployment Host**: Deployed via Railway cloud orchestrator
-- **Environment Variables**:
-  - `DATABASE_URL` (Connection string)
-  - `JWT_SECRET_KEY` (Auth signature)
-  - `APP_ENV` (development/production)
+## Assumptions
+- Existing authentication, database session, activity logging, and adapter patterns remain available.
+- Missing external credentials can be supplied through environment variables before deployment.
+
+## Agent Responsibilities
+
+### Coordinator
+Create a numbered build plan with phase objectives, tasks, timelines, resources, and deliverables.
+
+### Architect
+Produce Mermaid diagrams and ADRs that map requirements to Shipyard components and data flow.
+
+### Builder
+Implement code and tests within the existing FastAPI, SQLAlchemy, and adapter patterns.
+
+### Reviewer
+Check security, maintainability, error handling, architectural compliance, and test adequacy.
+
+### QA
+Verify acceptance criteria, regression coverage, endpoint behavior, and failure handling.
+
+### Platform
+Review deployment configuration, runtime limits, observability, cost, and knowledge-candidate recommendations.
+
+## Phase Plan
+
+### Phase 1: Service Foundation
+
+#### Objectives
+- Establish core API and service boundaries.
+
+#### Tasks
+- Add schemas, service functions, routes, and logging events.
+- Add migrations when persistent state is required.
+
+#### Timeline
+- 1 engineering pass.
+
+#### Resources
+- Existing FastAPI app, SQLAlchemy session, activity log service, and tests.
+
+#### Deliverables
+- Working service code, migration if needed, and focused unit tests.
+
+## Missing Inputs & Upload Requests
+- None currently known.
+
+## Validation Checklist
+- Required sections are present.
+- Agent responsibilities are explicit.
+- Acceptance criteria are testable.
+- Missing uploads are listed or explicitly marked as none.
+
+## Risks and Blockers
+- External credentials or provider-specific settings may block deployment until supplied.
+
+## Acceptance Criteria
+- All protected endpoints enforce authentication.
+- New tests pass in the repository test suite.
+- The implementation follows the architecture and deployment constraints above.
 """
 
     def _generate_mock_build_plan(self, project_title: str) -> str:
@@ -1018,16 +1080,55 @@ The objective of this project is to implement a high-performance **{project_titl
 This plan details the phases for building {project_title}.
 
 ## Phase 1: Core Service Setup
+### Objectives
+- Establish the service boundary and request validation model.
+
+### Tasks
 - Initialize classes in `app/core/service.py`
 - Setup validation logic and exception raising
 
+### Timeline
+- 1 implementation pass.
+
+### Resources
+- Engineering Specification, existing service patterns, and FastAPI routing conventions.
+
+### Deliverables
+- Core service module and validation behavior.
+
 ## Phase 2: Integration & DB
+### Objectives
+- Connect persistence and integration points.
+
+### Tasks
 - Bind database interface configurations
 - Configure asynchronous session context managers
 
+### Timeline
+- 1 implementation pass.
+
+### Resources
+- SQLAlchemy session utilities and existing adapter interfaces.
+
+### Deliverables
+- Database integration code and migration plan if persistence changes.
+
 ## Phase 3: Validation Testing
+### Objectives
+- Verify behavior and acceptance criteria.
+
+### Tasks
 - Implement async unit tests in `tests/test_service.py`
 - Validate performance and boundaries
+
+### Timeline
+- 1 verification pass.
+
+### Resources
+- Pytest, anyio, and existing test fixtures.
+
+### Deliverables
+- Passing tests and documented verification results.
 """
 
     def _generate_mock_architecture(self, project_title: str) -> str:

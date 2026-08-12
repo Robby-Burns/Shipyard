@@ -1,10 +1,12 @@
 # Shipyard Architecture (Rarely changes)
 
+> Current implementation details are governed by `current_implementation_alignment.md`.
+
 ## Core Principle
 
 > **The engineering organization is permanent. Infrastructure is replaceable.**
 
-This principle defines the invariant parts of Shipyard – the roles, workflow, and organizational learning – while allowing all underlying technologies to evolve.
+This principle defines the invariant parts of Shipyard - the roles, workflow, and organizational learning - while allowing all underlying technologies to evolve.
 
 ---
 
@@ -24,17 +26,17 @@ This principle defines the invariant parts of Shipyard – the roles, workflow, 
 The **Workflow Engine** coordinates the six core engineering disciplines. When a discipline needs AI reasoning it requests a capability from the **Model Router**.
 
 ```
-Coordinator → Architect → Builder → Reviewer → QA → Platform
+Coordinator -> Architect -> Builder -> Reviewer -> QA -> Platform
 ```
 
 *Each discipline has a permanent responsibility; models may change, but the roles do not.*
 
-- **Coordinator** – tracks milestones, enforces human‑approval gates, and routes work.
-- **Architect** – creates system architecture, ADRs, and updates the specification with design decisions.
-- **Builder** – generates code, commits to version control, and runs unit tests.
-- **Reviewer** – performs code and security review against acceptance criteria.
-- **QA** – executes functional, performance, and accessibility testing.
-- **Platform** – observes execution, gathers evidence, and formulates improvement recommendations.
+- **Coordinator** - tracks milestones, enforces human‑approval gates, and routes work.
+- **Architect** - creates system architecture, ADRs, and updates the specification with design decisions.
+- **Builder** - generates code, commits to version control, and runs unit tests.
+- **Reviewer** - performs code and security review against acceptance criteria.
+- **QA** - executes functional, performance, and accessibility testing.
+- **Platform** - observes execution, gathers evidence, and formulates improvement recommendations.
 
 ---
 
@@ -45,11 +47,11 @@ Coordinator → Architect → Builder → Reviewer → QA → Platform
 > The pattern isolates the AI Engineering Organization from concrete technology choices. Infrastructure may evolve over time, yet the engineering roles, workflow, and organizational behavior stay invariant.
 
 ### Core Responsibilities (for every adapter)
-- **Connection management** – establish and release resources.
-- **Health reporting** – expose status and diagnostics.
-- **Capability execution** – perform the requested operation (e.g., inference, repository push).
-- **Configuration validation** – ensure the adapter is correctly set up before use.
-- **Graceful shutdown** – cleanly release resources.
+- **Connection management** - establish and release resources.
+- **Health reporting** - expose status and diagnostics.
+- **Capability execution** - perform the requested operation (e.g., inference, repository push).
+- **Configuration validation** - ensure the adapter is correctly set up before use.
+- **Graceful shutdown** - cleanly release resources.
 
 ### Core Interface Set (conceptual, not concrete file names)
 - `ModelInterface`
@@ -68,15 +70,11 @@ Each concrete adapter implements the responsibilities above while adhering to th
 
 ## Model Family Adapters (Inference Providers)
 
-When a role requires AI reasoning it calls the **Model Router** with a capability name (e.g., `code_generation`). The router selects a **Model Family Adapter** that implements the standard `ModelInterface`.
+When a role requires AI reasoning it calls the **Model Router** with a capability name such as coding, architecture, code review, testing, or general reasoning. The router selects a configured model/provider adapter.
 
-Supported families (extensible via configuration):
-- Hermes
-- Claude
-- GPT
-- Gemini
+Supported model providers are configuration-driven and replaceable. Current defaults route through OpenRouter-compatible model identifiers, with native-provider bypass support where configured.
 
-Routing policies (primary/fallback) are defined in a separate `routing.yaml` configuration file and are not part of this architecture description.
+Routing policies are defined in application configuration and model-catalog data; they are not part of this architecture description.
 
 ---
 
@@ -107,24 +105,24 @@ The Model Family Adapter translates this contract into the provider‑specific r
 
 ## Capability‑Based Routing
 
-Roles request **capabilities**, not specific models. The Model Router resolves the request using the `routing.yaml` configuration, selecting the appropriate Model Family Adapter.
+Roles request **capabilities**, not specific models. The Model Router resolves the request using application configuration, model catalog data, and routing outcomes.
 
 ```yaml
-code_generation:
-  primary: hermes
+coding:
+  primary: configured coding model
 architecture:
-  primary: claude
+  primary: configured architecture model
 review:
-  primary: gpt
+  primary: configured review model
 multimodal_analysis:
-  primary: gemini
+  primary: configured analysis model
 ```
 
 ---
 
 ## Status Capability
 
-Transparency is a core requirement. Any user can query `Status` and receive a structured report of each role’s state, current task, and estimated completion time.
+Transparency is a core requirement. Any user can query `Status` and receive a structured report of each role's state, current task, and estimated completion time.
 
 ---
 
@@ -139,10 +137,10 @@ The **Engineering Journal** records a chronological log of major events (Specifi
 A project progresses through well‑defined states observable via the Status capability:
 
 ```
-Engineering Intake → Engineering Specification → Approved → Architecture → Implementation → Review → QA → Deployment Ready → Engineering Passport → Complete
+Engineering Intake -> Validated Engineering Specification -> Approved Workflow -> Planning -> Designing -> Building -> Reviewing -> Testing -> Awaiting Approval -> Completed
 ```
 
-Transitions are driven by the Workflow Engine and gated by human approvals where required.
+Transitions are driven by the Workflow Engine and gated by human approvals where required. The current persisted workflow states are documented in `current_implementation_alignment.md`.
 
 ---
 
@@ -152,17 +150,17 @@ Shipyard improves through observation and evidence, not by modifying the AI itse
 
 ```
 Engineering Execution
-    ↓
+    v
 Observation (Platform)
-    ↓
+    v
 Evidence (metrics, recurring ADRs, repeated clarification requests, success/failure patterns)
-    ↓
+    v
 Recommendation (proposed process or template changes)
-    ↓
+    v
 Human Approval
-    ↓
+    v
 Organizational Standard (shared knowledge, updated templates, best‑practice guides)
-    ↓
+    v
 Future Projects
 ```
 
@@ -170,11 +168,11 @@ Future Projects
 
 ## Guiding Principles (Reordered for clarity)
 
-1. **Shipyard is an AI Engineering Organization—not an AI coding assistant.**
+1. **Shipyard is an AI Engineering Organization-not an AI coding assistant.**
 2. **Shipyard begins where product discovery ends.**
 3. **Shipyard performs engineering intake, not product discovery.**
-4. **Engineering knowledge belongs to the organization—not the model.**
-5. **Models are infrastructure—not the architecture.**
+4. **Engineering knowledge belongs to the organization-not the model.**
+5. **Models are infrastructure-not the architecture.**
 6. **Infrastructure should be replaceable behind stable interfaces.**
 7. **Shipyard accepts many forms of product documentation but always engineers from a validated Engineering Specification.**
 8. **Every feature should strengthen the experience of working with a professional engineering organization.**

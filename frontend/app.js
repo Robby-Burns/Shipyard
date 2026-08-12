@@ -528,6 +528,9 @@ async function loadProjects() {
                         clearInterval(ACTIVE_POLLING_INTERVAL);
                         ACTIVE_POLLING_INTERVAL = null;
                     }
+                } else {
+                    state.activeProjectId = null;
+                    renderProjectPlaceholder("Select a Project", "Select a project from the portfolio list to review active discipline status, specifications, event journals, and generated passports.");
                 }
             }
         }
@@ -585,7 +588,14 @@ function renderProjectsList() {
         card.innerHTML = `
             <div class="project-card-header">
                 <span class="project-card-title">${p.title}</span>
-                <span class="badge-status ${p.status}">${friendlyStatus}</span>
+                <div class="project-card-actions">
+                    <span class="badge-status ${p.status}">${friendlyStatus}</span>
+                    ${p.status === "failed" ? `
+                        <button class="project-card-remove" title="Remove terminated project from portfolio" aria-label="Remove terminated project from portfolio">
+                            <i class="fa-solid fa-trash-can"></i>
+                        </button>
+                    ` : ''}
+                </div>
             </div>
             <div class="project-card-meta">
                 <div class="meta-row">
@@ -607,8 +617,77 @@ function renderProjectsList() {
             selectProject(p.id);
         });
 
+        const removeBtn = card.querySelector(".project-card-remove");
+        if (removeBtn) {
+            removeBtn.addEventListener("click", (event) => {
+                event.stopPropagation();
+                hideProjectFromPortfolio(p, removeBtn);
+            });
+        }
+
         listContainer.appendChild(card);
     });
+}
+
+function renderProjectPlaceholder(title, message) {
+    const container = document.getElementById("project-details-container");
+    if (!container) return;
+    container.removeAttribute("data-project-id");
+    container.innerHTML = `
+        <div class="detail-placeholder">
+            <i class="fa-solid fa-diagram-project detail-placeholder-icon"></i>
+            <h3>${title}</h3>
+            <p>${message}</p>
+        </div>
+    `;
+}
+
+async function hideProjectFromPortfolio(project, triggerButton = null) {
+    if (!project || project.status !== "failed") return;
+
+    if (!confirm("Remove this terminated project from the portfolio? The workflow record, artifacts, journal entries, and database history will be kept.")) {
+        return;
+    }
+    const confirmation = prompt("Type DELETE to remove this terminated project from the portfolio:");
+    if (confirmation !== "DELETE") {
+        alert("Portfolio removal cancelled.");
+        return;
+    }
+
+    const originalButtonHtml = triggerButton ? triggerButton.innerHTML : "";
+    if (triggerButton) {
+        triggerButton.disabled = true;
+        triggerButton.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+    }
+
+    try {
+        const res = await fetch(`${API_BASE}/api/v1/workflows/${project.id}/portfolio`, {
+            method: "DELETE",
+            headers: getHeaders()
+        });
+        if (res.ok) {
+            state.projects = state.projects.filter(p => p.id !== project.id);
+            if (state.activeProjectId === project.id) {
+                state.activeProjectId = null;
+                renderProjectPlaceholder("Project Removed From Portfolio", "The terminated project was hidden from this portfolio view. Its database record and artifacts were preserved.");
+            }
+            renderProjectsList();
+        } else {
+            const err = await res.json();
+            alert(`Failed to remove project from portfolio: ${err.detail || "Unknown error"}`);
+            if (triggerButton) {
+                triggerButton.disabled = false;
+                triggerButton.innerHTML = originalButtonHtml;
+            }
+        }
+    } catch (e) {
+        console.error(e);
+        alert("Failed to connect to workflow service.");
+        if (triggerButton) {
+            triggerButton.disabled = false;
+            triggerButton.innerHTML = originalButtonHtml;
+        }
+    }
 }
 
 function getStepRoleName(stepCode) {
@@ -753,6 +832,11 @@ function renderProjectDetails(project) {
                         <button class="btn btn-secondary" id="btn-force-restart-build" style="font-size:0.78rem; padding:0.35rem 0.7rem; display:flex; align-items:center; gap:0.35rem; background:rgba(255,255,255,0.05); border:1px solid hsl(var(--border-color)); color:hsl(var(--text-muted)); height:fit-content; margin-top:0; border-radius:6px; cursor:pointer;">
                             <i class="fa-solid fa-rotate-left"></i> Restart Build
                         </button>
+                        ${project.status === 'failed' ? `
+                            <button class="btn btn-danger" id="btn-hide-project" style="font-size:0.78rem; padding:0.35rem 0.7rem; display:flex; align-items:center; gap:0.35rem; height:fit-content; margin-top:0; border-radius:6px; cursor:pointer;">
+                                <i class="fa-solid fa-trash-can"></i> Remove From Portfolio
+                            </button>
+                        ` : ''}
                     </div>
                 ` : ''}
             </div>
@@ -998,6 +1082,11 @@ function renderProjectDetails(project) {
         });
     }
 
+    const hideProjectBtn = container.querySelector("#btn-hide-project");
+    if (hideProjectBtn) {
+        hideProjectBtn.addEventListener("click", () => hideProjectFromPortfolio(project, hideProjectBtn));
+    }
+
     // Render alert banners
     renderProjectAlerts(project);
 
@@ -1144,9 +1233,14 @@ function renderProjectAlerts(project) {
             </div>
             <div class="action-form">
                 <div class="form-group">
-                    <button class="btn btn-danger" id="btn-alert-restart-build" style="border-radius: 6px; padding: 0.5rem 1rem; font-size: 0.85rem;">
-                        <i class="fa-solid fa-rotate-left"></i> Restart Build
-                    </button>
+                    <div class="action-buttons-row">
+                        <button class="btn btn-danger" id="btn-alert-restart-build" style="border-radius: 6px; padding: 0.5rem 1rem; font-size: 0.85rem;">
+                            <i class="fa-solid fa-rotate-left"></i> Restart Build
+                        </button>
+                        <button class="btn btn-secondary" id="btn-alert-hide-project" style="border-radius: 6px; padding: 0.5rem 1rem; font-size: 0.85rem;">
+                            <i class="fa-solid fa-trash-can"></i> Remove From Portfolio
+                        </button>
+                    </div>
                 </div>
             </div>
         `;
@@ -1177,6 +1271,9 @@ function renderProjectAlerts(project) {
                     console.error(e);
                 }
             }
+        });
+        card.querySelector("#btn-alert-hide-project").addEventListener("click", () => {
+            hideProjectFromPortfolio(project, card.querySelector("#btn-alert-hide-project"));
         });
         
         alertsBox.appendChild(card);

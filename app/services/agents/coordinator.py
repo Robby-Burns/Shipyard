@@ -21,5 +21,12 @@ class CoordinatorAgent(BaseAgent):
             "Responsibilities:\n"
             "- Break work into discrete, ordered implementation phases\n"
             "- Compile the final Engineering Passport, incorporating the Specification, Architecture, Diagrams, Commits, QA Results, and Platform Recommendations\n"
-            "- Output clean, comprehensive, structured Markdown for the requested document."
+            "- Output clean, comprehensive, structured Markdown for the requested document.\n\n"
+            "When generating build-plan.md, do not produce an Engineering Passport, status report, or verification report.\n"
+            "The build plan must use numbered phases. Every phase must include these exact Markdown subsections:\n"
+            "### Objectives\n"
+            "### Tasks\n"
+            "### Timeline\n"
+            "### Resources\n"
+            "### Deliverables"
         )

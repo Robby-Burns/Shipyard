@@ -15,6 +15,83 @@ from app.database.session import get_db
 from app.main import app
 from app.schemas.model_router import ModelRouteResponse
 from app.services.intake import IntakeService
+from app.services.specification_contract import missing_engineering_spec_sections
+
+
+VALID_SPEC = """# Live Engineering Specification: Continuation Test
+
+## Request Summary
+Build a scan status service.
+
+## Objectives
+- Track scan state.
+
+## Scope
+- API, service, and tests.
+
+## Non-Goals
+- External scanner implementation.
+
+## Requirements
+- Provide scan status lookup.
+
+## Constraints
+- Use FastAPI and PostgreSQL.
+
+## Assumptions
+- Authentication already exists.
+
+## Agent Responsibilities
+
+### Coordinator
+Create the build plan.
+
+### Architect
+Create diagrams and ADRs.
+
+### Builder
+Implement code and tests.
+
+### Reviewer
+Review security and maintainability.
+
+### QA
+Validate acceptance criteria.
+
+### Platform
+Review deployment and observability.
+
+## Phase Plan
+
+### Phase 1: API
+
+#### Objectives
+- Define endpoint behavior.
+
+#### Tasks
+- Implement POST /scans/{scan_id}.
+
+#### Timeline
+- 1 pass.
+
+#### Resources
+- Existing FastAPI app.
+
+#### Deliverables
+- Endpoint and tests.
+
+## Missing Inputs & Upload Requests
+- None currently known.
+
+## Validation Checklist
+- Required sections are present.
+
+## Risks and Blockers
+- None currently known.
+
+## Acceptance Criteria
+- POST /scans/{scan_id} returns the scan status.
+"""
 
 client = TestClient(app)
 
@@ -114,14 +191,14 @@ async def test_intake_continues_a_truncated_specification(async_session: AsyncSe
                 id="first-completion",
                 capability=route_request.capability,
                 model_used="test-model",
-                content="VALIDATED\n# Engineering Specification\n\n## API\nPOST /scans/{",
+                content="VALIDATED\n" + VALID_SPEC[:-20],
                 usage={"finish_reason": "length"},
             )
         return ModelRouteResponse(
             id="continuation-completion",
             capability=route_request.capability,
             model_used="test-model",
-            content="scan_id}\n\nReturns the scan status.",
+            content=VALID_SPEC[-20:],
             usage={"finish_reason": "stop"},
         )
 
@@ -130,10 +207,47 @@ async def test_intake_continues_a_truncated_specification(async_session: AsyncSe
     result = await service.send_chat_message(session.id, "Approve and write the spec")
 
     assert len(requests) == 2
-    assert result.specification.endswith("POST /scans/{\nscan_id}\n\nReturns the scan status.")
+    assert result.specification == VALID_SPEC.strip()
 
     if os.path.exists(service.artifacts_dir):
         shutil.rmtree(service.artifacts_dir)
+
+
+@pytest.mark.anyio
+async def test_intake_rejects_incomplete_validated_specification(async_session: AsyncSession):
+    service = IntakeService(async_session)
+
+    async def mock_route(route_request, request_id=None):
+        return ModelRouteResponse(
+            id="incomplete-completion",
+            capability=route_request.capability,
+            model_used="test-model",
+            content="VALIDATED\n# Engineering Specification\n\n## Requirements\n- Build an API.",
+            usage={"finish_reason": "stop"},
+        )
+
+    service.model_router.route = mock_route
+    session = await service.create_session(title="Incomplete Spec Test")
+    result = await service.send_chat_message(session.id, "Approve and write the spec")
+
+    assert result.status == "in_progress"
+    assert result.specification is None
+    assert "was rejected because it is missing required sections" in result.messages[-1]["content"]
+    assert "Agent Responsibilities > Coordinator" in result.messages[-1]["content"]
+
+    if os.path.exists(service.artifacts_dir):
+        shutil.rmtree(service.artifacts_dir)
+
+
+def test_spec_contract_requires_phase_subsections_inside_phase_plan():
+    incomplete_phase_spec = VALID_SPEC.replace(
+        "#### Deliverables\n- Endpoint and tests.\n",
+        "",
+    )
+
+    missing = missing_engineering_spec_sections(incomplete_phase_spec)
+
+    assert "Phase Plan > Phase 1: API > Deliverables" in missing
 
 
 def test_intake_endpoints_full_flow(auth_headers, other_user_headers):

@@ -1,0 +1,6 @@
+graph TD
+    Client[Web Frontend / Client API] -->|HTTPS / JWT| Gateway[FastAPI API Gateway]
+    Gateway -->|Async Middleware| MainApp[Core Application Logic]
+    MainApp -->|Adapter Interface| DB[(PostgreSQL Database)]
+    MainApp -->|Adapter Interface| Cache[(Redis Cache)]
+    MainApp -->|Adapter Interface| Storage[S3 Object Store]

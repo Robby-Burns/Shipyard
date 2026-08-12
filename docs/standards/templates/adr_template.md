@@ -7,7 +7,7 @@
 
 ## Context and Problem Statement
 
-[What is the context and problem we are trying to solve? Describe the background information and engineering challenges.]
+[What is the context and problem we are trying to solve Describe the background information and engineering challenges.]
 
 ## Decision Drivers
 

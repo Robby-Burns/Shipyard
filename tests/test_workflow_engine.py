@@ -154,6 +154,69 @@ def test_workflow_endpoints_authenticated():
         app.dependency_overrides.clear()
 
 
+def test_hide_terminated_workflow_endpoint_soft_hides_from_default_list():
+    test_engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+
+    async def init_and_override():
+        async with test_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        async_session = sessionmaker(
+            test_engine, class_=AsyncSession, expire_on_commit=False
+        )
+        async with async_session() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = init_and_override
+    try:
+        token = jwt.encode(
+            {"sub": "workflow_admin"},
+            settings.jwt_secret_key,
+            algorithm=settings.jwt_algorithm,
+        )
+        headers = {"Authorization": f"Bearer {token}"}
+
+        create_res = client.post(
+            "/api/v1/workflows",
+            headers=headers,
+            json={
+                "title": "Terminated UI Cleanup",
+                "specification": "Test cleanup workflow",
+            },
+        )
+        assert create_res.status_code == 201
+        wf_id = create_res.json()["id"]
+
+        terminate_res = client.post(
+            f"/api/v1/workflows/{wf_id}/terminate",
+            headers=headers,
+        )
+        assert terminate_res.status_code == 200
+
+        hide_res = client.delete(
+            f"/api/v1/workflows/{wf_id}/portfolio",
+            headers=headers,
+        )
+        assert hide_res.status_code == 200
+        assert hide_res.json()["artifacts"]["portfolio_hidden"] is True
+
+        list_res = client.get("/api/v1/workflows", headers=headers)
+        assert list_res.status_code == 200
+        assert wf_id not in [item["id"] for item in list_res.json()]
+
+        include_hidden_res = client.get(
+            "/api/v1/workflows?include_hidden=true",
+            headers=headers,
+        )
+        assert include_hidden_res.status_code == 200
+        assert wf_id in [item["id"] for item in include_hidden_res.json()]
+
+        get_res = client.get(f"/api/v1/workflows/{wf_id}", headers=headers)
+        assert get_res.status_code == 200
+        assert get_res.json()["id"] == wf_id
+    finally:
+        app.dependency_overrides.clear()
+
+
 @pytest.mark.anyio
 async def test_background_run_pipeline_error_handling(async_session: AsyncSession):
     from app.api.v1.workflows import background_run_pipeline
@@ -188,6 +251,37 @@ async def test_background_run_pipeline_error_handling(async_session: AsyncSessio
     updated_wf = result.scalar_one()
     assert updated_wf.status == WorkflowStatus.FAILED
     assert updated_wf.error_message == "Simulated pipeline failure"
+
+
+@pytest.mark.anyio
+async def test_hide_terminated_workflow_preserves_record_but_excludes_portfolio_list(
+    async_session: AsyncSession,
+):
+    service = WorkflowEngineService(async_session)
+    wf = await service.create_workflow(
+        WorkflowCreateRequest(
+            title="Terminated Portfolio Item",
+            specification="Test specification content",
+        ),
+        owner_id="owner-1",
+        request_id="wf-hide-req",
+    )
+    wf.status = WorkflowStatus.FAILED
+    wf.error_message = "Workflow execution terminated by user."
+    await async_session.commit()
+
+    hidden = await service.hide_workflow_from_portfolio(
+        wf.id,
+        hidden_by="owner-1",
+        request_id="wf-hide-req",
+    )
+
+    assert hidden.artifacts["portfolio_hidden"] is True
+    assert (await service.get_workflow(wf.id)).id == wf.id
+    visible_list = await service.list_workflows(owner_id="owner-1")
+    hidden_list = await service.list_workflows(owner_id="owner-1", include_hidden=True)
+    assert wf.id not in [item.id for item in visible_list]
+    assert wf.id in [item.id for item in hidden_list]
 
 
 @pytest.mark.anyio
@@ -277,3 +371,52 @@ async def test_workflow_challenge_escalation_flow(async_session: AsyncSession):
         assert wf.status == WorkflowStatus.ESCALATED
         assert "failed challenge verification check after 2 retries" in wf.error_message
 
+
+@pytest.mark.anyio
+async def test_coordinator_challenge_rejects_build_plan_missing_phase_subsections(
+    async_session: AsyncSession,
+):
+    from app.services.agents.challenger import ChallengerAgent
+
+    challenger = ChallengerAgent(async_session)
+    response = await challenger.run_challenge(
+        step_name="coordinator_planning",
+        primary_output=(
+            "# Engineering Build Plan\n\n"
+            "## Phase 1: Core Service Setup\n"
+            "- Initialize service files.\n"
+        ),
+        request_id="wf-build-plan-contract",
+    )
+
+    assert response.artifacts["challenge_status"] == "failed"
+    assert "Objectives" in response.artifacts["challenge_reason"]
+    assert "Deliverables" in response.artifacts["challenge_reason"]
+
+
+@pytest.mark.anyio
+async def test_coordinator_challenge_checks_each_build_plan_phase(
+    async_session: AsyncSession,
+):
+    from app.services.agents.challenger import ChallengerAgent
+
+    challenger = ChallengerAgent(async_session)
+    response = await challenger.run_challenge(
+        step_name="coordinator_planning",
+        primary_output=(
+            "# Engineering Build Plan\n\n"
+            "## Phase 1: Core Service Setup\n"
+            "### Objectives\n- Establish service boundaries.\n"
+            "### Tasks\n- Add service files.\n"
+            "### Timeline\n- 1 pass.\n"
+            "### Resources\n- Existing app.\n"
+            "### Deliverables\n- Service module.\n\n"
+            "## Phase 2: Testing\n"
+            "### Objectives\n- Verify behavior.\n"
+        ),
+        request_id="wf-build-plan-phase-contract",
+    )
+
+    assert response.artifacts["challenge_status"] == "failed"
+    assert "Phase 2: Testing > Tasks" in response.artifacts["challenge_reason"]
+    assert "Phase 2: Testing > Deliverables" in response.artifacts["challenge_reason"]

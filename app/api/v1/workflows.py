@@ -42,12 +42,16 @@ async def create_workflow(
 async def list_workflows(
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
+    include_hidden: bool = Query(default=False),
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
     service = WorkflowEngineService(db)
     return await service.list_workflows(
-        owner_id=user.get("sub"), limit=limit, offset=offset
+        owner_id=user.get("sub"),
+        limit=limit,
+        offset=offset,
+        include_hidden=include_hidden,
     )
 
 
@@ -341,3 +345,30 @@ async def terminate_workflow(
     await db.commit()
     await db.refresh(wf)
     return wf
+
+
+@router.delete("/{workflow_id}/portfolio", response_model=WorkflowRunResponse)
+async def hide_terminated_workflow_from_portfolio(
+    workflow_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(get_current_user),
+):
+    service = WorkflowEngineService(db)
+    wf = await service.get_workflow(workflow_id)
+    if not wf:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Workflow run not found"
+        )
+    if wf.owner_id != user.get("sub"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden"
+        )
+    try:
+        return await service.hide_workflow_from_portfolio(
+            workflow_id,
+            hidden_by=user.get("sub"),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
