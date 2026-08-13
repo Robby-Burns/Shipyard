@@ -429,67 +429,163 @@ function updateStartProjectButton() {
 
 // Kickoff project creation from validated intake spec
 async function promoteIntakeToProject() {
-    if (!state.activeIntakeSession || !state.activeIntakeSession.specification) return;
+    const repoInput = document.getElementById("intake-repo-url");
+    const startButton = document.getElementById("start-project-btn");
 
-    const btn = document.getElementById("start-project-btn");
-    const repoUrlInput = document.getElementById("intake-repo-url");
-    const repoUrl = repoUrlInput ? repoUrlInput.value.trim() : "";
-    if (!isValidGitHubRepositoryUrl(repoUrl)) {
-        alert("Enter a valid GitHub repository URL before starting engineering.");
-        repoUrlInput?.focus();
-        updateStartProjectButton();
+    if (!repoInput || !startButton) {
+        console.error("Engineering approval controls not found.");
         return;
     }
 
-    btn.disabled = true;
-    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Preparing Organization...';
+    const repoUrl = repoInput.value.trim();
+
+    if (!repoUrl) {
+        repoInput.classList.add("invalid");
+        repoInput.focus();
+        alert("Enter the GitHub repository where Shipyard should commit the generated project.");
+        return;
+    }
+
+    const githubPattern = /^https:\/\/(www\.)?github\.com\/[^/]+\/[^/]+\/?$/;
+
+    if (!githubPattern.test(repoUrl)) {
+        repoInput.classList.add("invalid");
+        repoInput.focus();
+        alert("Enter a valid GitHub repository URL, for example https://github.com/owner/repository");
+        return;
+    }
+
+    repoInput.classList.remove("invalid");
+
+    const specification =
+        state.activeIntakeSession?.specification ||
+        activeIntakeSession?.specification;
+
+    if (!specification) {
+        alert("The Engineering Specification is not ready for approval yet.");
+        return;
+    }
+
+    const title =
+        state.activeIntakeSession?.title ||
+        activeIntakeSession?.title ||
+        "Engineering Request";
+
+    startButton.disabled = true;
+    startButton.innerHTML =
+        '<i class="fa-solid fa-spinner fa-spin"></i> Approving...';
 
     try {
-        // 1. Create workflow
-        const createRes = await fetch(`${API_BASE}/api/v1/workflows`, {
+        /*
+         * STEP 1
+         * Create the workflow in CREATED state.
+         * This does NOT start engineering.
+         */
+        const createRes = await fetch("/api/v1/workflows", {
             method: "POST",
             headers: getHeaders(),
             body: JSON.stringify({
-                title: state.activeIntakeSession.title === "New Project Intake" ? "Custom Service Build" : state.activeIntakeSession.title,
-                specification: state.activeIntakeSession.specification,
-                repository_url: repoUrl || null
+                title,
+                specification,
+                repository_url: repoUrl
             })
         });
 
-        if (createRes.ok) {
-            const project = await createRes.json();
-            
-            // 2. Trigger pipeline run asynchronously
-            fetch(`${API_BASE}/api/v1/workflows/${project.id}/run`, {
+        if (!createRes.ok) {
+            const errorText = await createRes.text();
+            throw new Error(
+                `Could not create engineering workflow: ${errorText}`
+            );
+        }
+
+        const project = await createRes.json();
+
+        /*
+         * STEP 2
+         * Explicitly record human approval.
+         * The backend derives the approving user from authentication.
+         */
+        startButton.innerHTML =
+            '<i class="fa-solid fa-spinner fa-spin"></i> Recording Approval...';
+
+        const approvalRes = await fetch(
+            `/api/v1/workflows/${project.id}/approve-engineering`,
+            {
+                method: "POST",
+                headers: getHeaders(),
+                body: JSON.stringify({})
+            }
+        );
+
+        if (!approvalRes.ok) {
+            const errorText = await approvalRes.text();
+            throw new Error(
+                `Engineering approval failed: ${errorText}`
+            );
+        }
+
+        /*
+         * STEP 3
+         * Only after the backend records engineering approval
+         * may the engineering pipeline start.
+         */
+        startButton.innerHTML =
+            '<i class="fa-solid fa-spinner fa-spin"></i> Starting Engineering...';
+
+        const runRes = await fetch(
+            `/api/v1/workflows/${project.id}/run`,
+            {
                 method: "POST",
                 headers: getHeaders()
-            });
+            }
+        );
 
-            // 3. Shift tab to projects list and select this project
-            state.activeProjectId = project.id;
-            switchTab("projects");
-            
-            // Reset intake coordinator button
-            btn.disabled = false;
-            btn.innerHTML = '<i class="fa-solid fa-circle-check"></i> Approve & Start Engineering';
-            
-            // Reload intake coordinator for any future request
-            if (repoUrlInput) repoUrlInput.value = "";
-            initIntakeChat();
-        } else {
-            const err = await createRes.json();
-            alert(`Workflow creation failed: ${err.detail || "Unknown error"}`);
-            btn.disabled = false;
-            btn.innerHTML = '<i class="fa-solid fa-circle-check"></i> Approve & Start Engineering';
+        if (!runRes.ok) {
+            const errorText = await runRes.text();
+            throw new Error(
+                `Engineering pipeline could not start: ${errorText}`
+            );
         }
-    } catch (e) {
-        console.error(e);
-        alert("Failed to connect to workflow service.");
-        btn.disabled = false;
-        btn.innerHTML = '<i class="fa-solid fa-circle-check"></i> Approve & Start Engineering';
+
+        const startedProject = await runRes.json();
+
+        /*
+         * Hide the intake approval controls after successful start.
+         */
+        const actionsContainer =
+            document.getElementById("intake-actions-container");
+
+        if (actionsContainer) {
+            actionsContainer.style.display = "none";
+        }
+
+        /*
+         * Switch to the Projects view if the existing application
+         * provides that navigation helper.
+         */
+        if (typeof loadProjects === "function") {
+            await loadProjects();
+        }
+
+        if (typeof switchTab === "function") {
+            switchTab("projects");
+        }
+
+        console.log(
+            "Engineering started successfully:",
+            startedProject
+        );
+
+    } catch (error) {
+        console.error("Engineering start failed:", error);
+
+        startButton.disabled = false;
+        startButton.innerHTML =
+            '<i class="fa-solid fa-circle-check"></i> Approve & Start Engineering';
+
+        alert(error.message || "Engineering could not be started.");
     }
 }
-
 /* ==========================================================================
    Dest 2: PROJECTS & STATUS (ENGINEERING TIMELINE)
    ========================================================================== */

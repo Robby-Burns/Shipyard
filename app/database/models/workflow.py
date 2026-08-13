@@ -53,3 +53,10 @@ class WorkflowRun(Base):
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
+    engineering_approved_by: Mapped[Optional[str]] = mapped_column(
+        String(100), nullable=True
+    )
+
+    engineering_approved_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

@@ -860,6 +860,59 @@ class WorkflowEngineService:
         )
         return workflow
 
+    async def approve_engineering(
+        self,
+        workflow_id: uuid.UUID,
+        approved_by: Optional[str] = None,
+        request_id: Optional[str] = None,
+    ) -> WorkflowRun:
+        """Record explicit human approval to begin engineering."""
+        result = await self.db.execute(
+            select(WorkflowRun).where(WorkflowRun.id == workflow_id)
+        )
+        workflow = result.scalar_one_or_none()
+
+        if not workflow:
+            raise ValueError(f"Workflow run {workflow_id} not found")
+
+        if workflow.status != WorkflowStatus.CREATED:
+            raise ValueError(
+                f"Engineering approval is only allowed for a newly created workflow. "
+                f"Current status: '{workflow.status.value}'"
+            )
+
+        repository_url = (workflow.artifacts or {}).get("repository_url")
+        if not repository_url:
+            raise ValueError(
+                "A GitHub repository is required before engineering can start."
+            )
+
+        if workflow.engineering_approved_at:
+            raise ValueError("Engineering has already been approved for this workflow.")
+
+        if not approved_by:
+            raise ValueError("An authenticated user is required to approve engineering.")
+
+        workflow.engineering_approved_by = approved_by
+        workflow.engineering_approved_at = datetime.now(timezone.utc)
+        workflow.current_step = "engineering_approved"
+
+        await self.db.commit()
+        await self.db.refresh(workflow)
+
+        await self.activity_log.record(
+            event_type="engineering_approved",
+            source="workflow_engine",
+            request_id=request_id,
+            payload={
+                "workflow_id": str(workflow.id),
+                "approved_by": approved_by,
+                "repository_url": repository_url,
+            },
+        )
+
+        return workflow
+    
     async def approve_production_deployment(
         self,
         workflow_id: uuid.UUID,

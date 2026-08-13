@@ -52,6 +52,8 @@ class WorkflowApprovalRequest(BaseModel):
     approved_by: str
     comments: Optional[str] = None
 
+class EngineeringApprovalRequest(BaseModel):
+    comments: Optional[str] = None
 
 class WorkflowEscalationRequest(BaseModel):
     reason: str
@@ -74,6 +76,8 @@ class WorkflowRunResponse(BaseModel):
     error_message: Optional[str] = None
     approved_by: Optional[str] = None
     approved_at: Optional[datetime] = None
+    engineering_approved_by: Optional[str] = None
+    engineering_approved_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
     owner_id: Optional[str] = None

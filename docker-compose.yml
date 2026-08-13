@@ -22,7 +22,7 @@ services:
   app:
     build:
       context: .
-      dockerfile: docker/Dockerfile
+      dockerfile: Dockerfile
     container_name: shipyard-api
     restart: always
     ports:

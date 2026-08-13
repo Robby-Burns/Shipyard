@@ -8,6 +8,7 @@ import structlog
 from app.config.settings import settings
 from app.database.session import AsyncSessionLocal, get_db
 from app.schemas.workflow import (
+    EngineeringApprovalRequest,
     WorkflowApprovalRequest,
     WorkflowCreateRequest,
     WorkflowEscalationRequest,
@@ -165,14 +166,28 @@ async def run_full_pipeline(
         wf.current_step = "created"
         wf.artifacts = {"repository_url": repository_url} if repository_url else {}
         wf.error_message = None
+
+        # Force/restart clears BOTH approval types.
+        # A human must explicitly approve engineering again.
+        wf.engineering_approved_by = None
+        wf.engineering_approved_at = None
+
+        # Production approval is also cleared.
         wf.approved_by = None
         wf.approved_at = None
+
         await db.commit()
 
-    if settings.app_env == "production" and not repository_url:
+    if not repository_url:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="A GitHub repository is required before engineering can start.",
+        )
+
+    if not wf.engineering_approved_by or not wf.engineering_approved_at:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Engineering cannot start until the specification has been explicitly approved.",
         )
 
     # Prevent execution from terminal, awaiting approval, or escalated statuses
@@ -372,3 +387,27 @@ async def hide_terminated_workflow_from_portfolio(
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    @router.post(
+        "/{workflow_id}/approve-engineering",
+        response_model=WorkflowRunResponse,
+    )
+    async def approve_engineering(
+            workflow_id: uuid.UUID,
+            request: Request,
+            db: AsyncSession = Depends(get_db),
+            user: dict = Depends(get_current_user),
+    ):
+        service = WorkflowEngineService(db)
+
+        try:
+            return await service.approve_engineering(
+                workflow_id,
+                approved_by=user.get("sub"),
+                request_id=getattr(request.state, "request_id", None),
+            )
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e),
+            )
