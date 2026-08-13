@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
+from pathlib import Path
 
 from app.config.settings import settings
 from app.database.models.intake import IntakeSession
@@ -24,7 +25,9 @@ class IntakeService:
         self.db = db
         self.model_router = ModelRouterService(db)
         self.activity_log = ActivityLogService(db)
-        self.artifacts_dir = "artifacts/specifications"
+        self.artifacts_dir = Path(
+            os.getenv("ARTIFACTS_DIR", "/app/artifacts/specifications")
+        )
 
     async def create_session(
         self, title: str, owner_id: Optional[str] = None, request_id: Optional[str] = None
@@ -192,7 +195,7 @@ class IntakeService:
 
             # Persist specification to file system
             import anyio
-            os.makedirs(self.artifacts_dir, exist_ok=True)
+            self.artifacts_dir.mkdir(parents=True, exist_ok=True)
             file_path = os.path.join(self.artifacts_dir, f"{session.id}.md")
             spec_anyio = anyio.Path(file_path)
             await spec_anyio.write_text(spec_markdown, encoding="utf-8")

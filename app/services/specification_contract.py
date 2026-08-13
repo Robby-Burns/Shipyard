@@ -2,6 +2,10 @@ import re
 from typing import List
 
 
+# ============================================================================
+# Engineering Specification Contract
+# ============================================================================
+
 REQUIRED_ENGINEERING_SPEC_SECTIONS = [
     "Request Summary",
     "Objectives",
@@ -35,10 +39,84 @@ REQUIRED_PHASE_SUBSECTIONS = [
     "Deliverables",
 ]
 
-# Approved heading aliases.
+BUILD_PLAN_REQUIRED_PHASE_SUBSECTIONS = [
+    "Objectives",
+    "Tasks",
+    "Timeline",
+    "Resources",
+    "Deliverables",
+]
+
+
+# ============================================================================
+# Canonical Engineering Specification Template
 #
-# These allow the specification writer to use reasonable equivalent
-# terminology without causing a false validation failure.
+# IntakeService imports this constant directly.
+# Do not remove or rename it without updating IntakeService.
+# ============================================================================
+
+ENGINEERING_SPEC_TEMPLATE = """# Live Engineering Specification: {project_title}
+
+## Request Summary
+
+## Objectives
+
+## Scope
+
+## Non-Goals
+
+## Requirements
+
+## Constraints
+
+## Assumptions
+
+## Agent Responsibilities
+
+### Coordinator
+
+### Architect
+
+### Builder
+
+### Reviewer
+
+### QA
+
+### Platform
+
+## Phase Plan
+
+### Phase 1: Foundation
+
+#### Objectives
+
+#### Tasks
+
+#### Timeline
+
+#### Resources
+
+#### Deliverables
+
+## Missing Inputs & Upload Requests
+
+## Validation Checklist
+
+## Risks and Blockers
+
+## Acceptance Criteria
+"""
+
+
+# ============================================================================
+# Approved heading aliases
+#
+# The LLM may use slightly different but semantically equivalent headings.
+# Validation should not reject a specification simply because it says
+# "Product Constraints" instead of "Constraints", for example.
+# ============================================================================
+
 SECTION_ALIASES = {
     "Request Summary": [
         "Request Summary",
@@ -109,15 +187,33 @@ SECTION_ALIASES = {
 }
 
 
+# ============================================================================
+# Public validation functions
+# ============================================================================
+
 def missing_engineering_spec_sections(markdown: str) -> List[str]:
-    missing = []
+    """
+    Return required Engineering Specification sections that are missing.
+
+    Validation accepts approved heading aliases so equivalent terminology
+    does not create false failures.
+    """
+
+    missing: List[str] = []
+
+    # ------------------------------------------------------------------------
+    # Shared engineering specification sections
+    # ------------------------------------------------------------------------
 
     for section in REQUIRED_ENGINEERING_SPEC_SECTIONS:
-        if not _has_any_heading(
-            markdown,
-            SECTION_ALIASES.get(section, [section]),
-        ):
+        aliases = SECTION_ALIASES.get(section, [section])
+
+        if not _has_any_heading(markdown, aliases):
             missing.append(section)
+
+    # ------------------------------------------------------------------------
+    # Agent Responsibilities
+    # ------------------------------------------------------------------------
 
     agent_body = _section_body(
         markdown,
@@ -127,15 +223,22 @@ def missing_engineering_spec_sections(markdown: str) -> List[str]:
         ),
     )
 
-    for section in REQUIRED_AGENT_SECTIONS:
-        if not _has_any_heading(agent_body, [section]):
+    for agent in REQUIRED_AGENT_SECTIONS:
+        if not _has_heading(agent_body, agent):
             missing.append(
-                f"Agent Responsibilities > {section}"
+                f"Agent Responsibilities > {agent}"
             )
+
+    # ------------------------------------------------------------------------
+    # Phase Plan
+    # ------------------------------------------------------------------------
 
     phase_body = _section_body(
         markdown,
-        SECTION_ALIASES.get("Phase Plan", ["Phase Plan"]),
+        SECTION_ALIASES.get(
+            "Phase Plan",
+            ["Phase Plan"],
+        ),
     )
 
     phases = _numbered_phase_sections(phase_body)
@@ -146,20 +249,24 @@ def missing_engineering_spec_sections(markdown: str) -> List[str]:
         )
 
     for phase_title, phase_content in phases:
-        for section in REQUIRED_PHASE_SUBSECTIONS:
-            if not _has_any_heading(
+        for subsection in REQUIRED_PHASE_SUBSECTIONS:
+            if not _has_heading(
                 phase_content,
-                [section],
+                subsection,
             ):
                 missing.append(
-                    f"Phase Plan > {phase_title} > {section}"
+                    f"Phase Plan > {phase_title} > {subsection}"
                 )
 
     return missing
 
 
 def missing_build_plan_sections(markdown: str) -> List[str]:
-    missing = []
+    """
+    Validate a build plan containing numbered phases.
+    """
+
+    missing: List[str] = []
 
     phases = _numbered_phase_sections(markdown)
 
@@ -169,22 +276,30 @@ def missing_build_plan_sections(markdown: str) -> List[str]:
         )
 
     for phase_title, phase_content in phases:
-        for section in BUILD_PLAN_REQUIRED_PHASE_SUBSECTIONS:
-            if not _has_any_heading(
+        for subsection in BUILD_PLAN_REQUIRED_PHASE_SUBSECTIONS:
+            if not _has_heading(
                 phase_content,
-                [section],
+                subsection,
             ):
                 missing.append(
-                    f"{phase_title} > {section}"
+                    f"{phase_title} > {subsection}"
                 )
 
     return missing
 
 
+# ============================================================================
+# Heading helpers
+# ============================================================================
+
 def _has_any_heading(
     markdown: str,
     headings: List[str],
 ) -> bool:
+    """
+    Return True when any approved heading exists.
+    """
+
     for heading in headings:
         if _has_heading(markdown, heading):
             return True
@@ -196,6 +311,13 @@ def _has_heading(
     markdown: str,
     heading: str,
 ) -> bool:
+    """
+    Check for a Markdown heading from ## through ######.
+
+    Matching is case-insensitive and requires the entire heading line
+    to match the expected heading text.
+    """
+
     escaped = re.escape(heading)
 
     return bool(
@@ -206,17 +328,27 @@ def _has_heading(
     )
 
 
+# ============================================================================
+# Section extraction
+# ============================================================================
+
 def _section_body(
     markdown: str,
     headings: List[str],
 ) -> str:
+    """
+    Return the content belonging to the first matching ## section.
+
+    The section ends at the next ## heading.
+    """
+
     matches = []
 
     for heading in headings:
         escaped = re.escape(heading)
 
         match = re.search(
-            rf"(?im)^(##)\s+{escaped}\s*$",
+            rf"(?im)^##\s+{escaped}\s*$",
             markdown,
         )
 
@@ -226,7 +358,10 @@ def _section_body(
     if not matches:
         return ""
 
-    match = min(matches, key=lambda item: item.start())
+    match = min(
+        matches,
+        key=lambda item: item.start(),
+    )
 
     start = match.end()
 
@@ -235,18 +370,32 @@ def _section_body(
         markdown[start:],
     )
 
-    end = (
-        start + next_heading.start()
-        if next_heading
-        else len(markdown)
-    )
+    if next_heading:
+        end = start + next_heading.start()
+    else:
+        end = len(markdown)
 
     return markdown[start:end]
 
 
+# ============================================================================
+# Phase parsing
+# ============================================================================
+
 def _numbered_phase_sections(
     markdown: str,
 ) -> List[tuple[str, str]]:
+    """
+    Extract numbered Phase sections such as:
+
+        ## Phase 1: Foundation
+        ## Phase 2: Implementation
+
+    or:
+
+        ### Phase 1: Foundation
+    """
+
     matches = list(
         re.finditer(
             r"(?im)^(##|###)\s+(Phase\s+\d+[:\s-].*)$",
@@ -259,26 +408,19 @@ def _numbered_phase_sections(
     for index, match in enumerate(matches):
         start = match.end()
 
-        end = (
-            matches[index + 1].start()
-            if index + 1 < len(matches)
-            else len(markdown)
-        )
+        if index + 1 < len(matches):
+            end = matches[index + 1].start()
+        else:
+            end = len(markdown)
+
+        phase_title = match.group(2).strip()
+        phase_content = markdown[start:end]
 
         phases.append(
             (
-                match.group(2).strip(),
-                markdown[start:end],
+                phase_title,
+                phase_content,
             )
         )
 
     return phases
-
-
-BUILD_PLAN_REQUIRED_PHASE_SUBSECTIONS = [
-    "Objectives",
-    "Tasks",
-    "Timeline",
-    "Resources",
-    "Deliverables",
-]

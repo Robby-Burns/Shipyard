@@ -459,7 +459,7 @@ async function promoteIntakeToProject() {
 
     const specification =
         state.activeIntakeSession?.specification ||
-        activeIntakeSession?.specification;
+        state.activeIntakeSession?.specification;
 
     if (!specification) {
         alert("The Engineering Specification is not ready for approval yet.");
@@ -468,7 +468,7 @@ async function promoteIntakeToProject() {
 
     const title =
         state.activeIntakeSession?.title ||
-        activeIntakeSession?.title ||
+        state.activeIntakeSession?.title ||
         "Engineering Request";
 
     startButton.disabled = true;
@@ -481,7 +481,7 @@ async function promoteIntakeToProject() {
          * Create the workflow in CREATED state.
          * This does NOT start engineering.
          */
-        const createRes = await fetch("/api/v1/workflows", {
+        const createRes = await fetch(`${API_BASE}/api/v1/workflows`, {
             method: "POST",
             headers: getHeaders(),
             body: JSON.stringify({
@@ -509,11 +509,10 @@ async function promoteIntakeToProject() {
             '<i class="fa-solid fa-spinner fa-spin"></i> Recording Approval...';
 
         const approvalRes = await fetch(
-            `/api/v1/workflows/${project.id}/approve-engineering`,
+            `${API_BASE}/api/v1/workflows/${project.id}/approve-engineering`,
             {
                 method: "POST",
-                headers: getHeaders(),
-                body: JSON.stringify({})
+                headers: getHeaders()
             }
         );
 
@@ -533,7 +532,7 @@ async function promoteIntakeToProject() {
             '<i class="fa-solid fa-spinner fa-spin"></i> Starting Engineering...';
 
         const runRes = await fetch(
-            `/api/v1/workflows/${project.id}/run`,
+            `${API_BASE}/api/v1/workflows/${project.id}/run`,
             {
                 method: "POST",
                 headers: getHeaders()

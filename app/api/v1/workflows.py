@@ -386,28 +386,32 @@ async def hide_terminated_workflow_from_portfolio(
             request_id=getattr(request.state, "request_id", None),
         )
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
 
-    @router.post(
-        "/{workflow_id}/approve-engineering",
-        response_model=WorkflowRunResponse,
-    )
-    async def approve_engineering(
-            workflow_id: uuid.UUID,
-            request: Request,
-            db: AsyncSession = Depends(get_db),
-            user: dict = Depends(get_current_user),
-    ):
-        service = WorkflowEngineService(db)
 
-        try:
-            return await service.approve_engineering(
-                workflow_id,
-                approved_by=user.get("sub"),
-                request_id=getattr(request.state, "request_id", None),
-            )
-        except ValueError as e:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=str(e),
-            )
+@router.post(
+    "/{workflow_id}/approve-engineering",
+    response_model=WorkflowRunResponse,
+)
+async def approve_engineering(
+        workflow_id: uuid.UUID,
+        request: Request,
+        db: AsyncSession = Depends(get_db),
+        user: dict = Depends(get_current_user),
+):
+    service = WorkflowEngineService(db)
+
+    try:
+        return await service.approve_engineering(
+            workflow_id,
+            approved_by=user.get("sub"),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
