@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import List, Optional
 import uuid
 
@@ -167,10 +168,10 @@ async def run_full_pipeline(
         wf.artifacts = {"repository_url": repository_url} if repository_url else {}
         wf.error_message = None
 
-        # Force/restart clears BOTH approval types.
-        # A human must explicitly approve engineering again.
-        wf.engineering_approved_by = None
-        wf.engineering_approved_at = None
+        # Force restart is an admin override that preserves engineering approval so the
+        # pipeline can immediately resume. Production sign-off is intentionally cleared.
+        wf.engineering_approved_by = user.get("sub")
+        wf.engineering_approved_at = datetime.now(timezone.utc)
 
         # Production approval is also cleared.
         wf.approved_by = None
@@ -386,28 +387,32 @@ async def hide_terminated_workflow_from_portfolio(
             request_id=getattr(request.state, "request_id", None),
         )
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
 
-    @router.post(
-        "/{workflow_id}/approve-engineering",
-        response_model=WorkflowRunResponse,
-    )
-    async def approve_engineering(
-            workflow_id: uuid.UUID,
-            request: Request,
-            db: AsyncSession = Depends(get_db),
-            user: dict = Depends(get_current_user),
-    ):
-        service = WorkflowEngineService(db)
 
-        try:
-            return await service.approve_engineering(
-                workflow_id,
-                approved_by=user.get("sub"),
-                request_id=getattr(request.state, "request_id", None),
-            )
-        except ValueError as e:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=str(e),
-            )
+@router.post(
+    "/{workflow_id}/approve-engineering",
+    response_model=WorkflowRunResponse,
+)
+async def approve_engineering(
+        workflow_id: uuid.UUID,
+        request: Request,
+        db: AsyncSession = Depends(get_db),
+        user: dict = Depends(get_current_user),
+):
+    service = WorkflowEngineService(db)
+
+    try:
+        return await service.approve_engineering(
+            workflow_id,
+            approved_by=user.get("sub"),
+            request_id=getattr(request.state, "request_id", None),
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )

@@ -835,7 +835,8 @@ class WorkflowEngineService:
         elif req.action == "restart":
             workflow.status = WorkflowStatus.CREATED
             workflow.current_step = "created"
-            workflow.artifacts = {}
+            repo_url = workflow.artifacts.get("repository_url")
+            workflow.artifacts = {"repository_url": repo_url} if repo_url else {}
             workflow.approved_by = None
             workflow.approved_at = None
         elif req.action == "terminate":

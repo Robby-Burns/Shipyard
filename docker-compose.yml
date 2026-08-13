@@ -33,6 +33,7 @@ services:
       - PORT=8000
       - DATABASE_URL=postgresql+asyncpg://postgres:postgrespassword@db:5432/shipyard
       - JWT_SECRET_KEY=dev-secret-key-change-in-prod
+      - ARTIFACTS_DIR=/app/artifacts/specifications
     depends_on:
       db:
         condition: service_healthy

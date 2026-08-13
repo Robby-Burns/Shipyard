@@ -14,17 +14,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 
+# Fail the image build if Git is not actually available.
 RUN git --version
 
 COPY requirements.txt .
+
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
 RUN adduser --disabled-password --gecos "" shipyarduser \
+    && mkdir -p /app/artifacts/specifications \
     && chown -R shipyarduser:shipyarduser /app
+
 USER shipyarduser
 
 EXPOSE 8000
 
 CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+
