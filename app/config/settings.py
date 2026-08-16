@@ -102,6 +102,8 @@ class Settings(BaseSettings):
             v = v.replace("postgresql://", "postgresql+asyncpg://", 1)
         elif v.startswith("postgres://"):
             v = v.replace("postgres://", "postgresql+asyncpg://", 1)
+        elif v.startswith("sqlite://") and not v.startswith("sqlite+aiosqlite://"):
+            v = v.replace("sqlite://", "sqlite+aiosqlite://", 1)
 
         # Fallback to aiosqlite if asyncpg is not compiled/installed on host (e.g. Windows ARM64)
         if v.startswith("postgresql+asyncpg://") and not importlib.util.find_spec("asyncpg"):

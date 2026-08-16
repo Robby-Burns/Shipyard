@@ -27,12 +27,47 @@ from app.infrastructure.logging import setup_logging
 from app.infrastructure.middleware import RequestContextMiddleware
 from app.infrastructure.ratelimit_middleware import RateLimitMiddleware
 from app.services.auth import get_current_user
+from contextlib import asynccontextmanager
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
+import structlog
+
+from app.database.session import engine, Base
+import app.database.models  # noqa: F401
+
+logger = structlog.get_logger()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Automatically ensure schema and vector extension on startup
+    try:
+        if "postgresql" in settings.database_url or "postgres" in settings.database_url:
+            async with engine.begin() as conn:
+                await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+                await conn.run_sync(Base.metadata.create_all)
+        else:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+        logger.info(
+            "database_initialized",
+            engine="postgresql" if "postgresql" in settings.database_url else "sqlite",
+        )
+    except Exception as e:
+        logger.warning("database_initialization_deferred", error=str(e))
+    yield
+    await engine.dispose()
+
 
 # Initialize logging configuration
 setup_logging()
 
-app = FastAPI(title="Shipyard API", version="0.1.0", debug=settings.debug)
+app = FastAPI(
+    title="Shipyard API",
+    version="0.1.0",
+    debug=settings.debug,
+    lifespan=lifespan,
+)
 
 # Exception Handlers
 app.add_exception_handler(Exception, generic_exception_handler)
